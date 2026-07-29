@@ -63,6 +63,145 @@ export function assertPackFileList(actualFiles, allowedPaths) {
 }
 
 /**
+ * @param {string} stderr
+ * @param {string} stdout
+ * @param {string} message
+ * @returns {"not-found" | "exists" | "error"}
+ */
+export function classifyNpmViewFailure(stderr, stdout, message) {
+	const combined = `${stderr}\n${stdout}\n${message}`;
+	if (/\bE404\b/.test(combined) || /404 Not Found/i.test(combined) || /Not found/i.test(combined)) {
+		return "not-found";
+	}
+	if (/EEXIST|already exists/i.test(combined)) {
+		return "exists";
+	}
+	return "error";
+}
+
+/**
+ * @param {string} packageName
+ * @param {string} version
+ */
+export async function assertRegistryVersionAbsent(packageName, version) {
+	try {
+		await execFileAsync("npm", ["view", `${packageName}@${version}`, "version"], {
+			env: process.env,
+		});
+		throw new Error(`registry version already exists: ${packageName}@${version}`);
+	} catch (error) {
+		if (error instanceof Error && error.message.includes("already exists")) {
+			throw error;
+		}
+		const execError = /** @type {NodeJS.ErrnoException & { stdout?: string; stderr?: string }} */ (
+			error
+		);
+		const outcome = classifyNpmViewFailure(
+			String(execError.stderr ?? ""),
+			String(execError.stdout ?? ""),
+			String(execError.message ?? ""),
+		);
+		if (outcome === "not-found") {
+			return;
+		}
+		const detail = [execError.stderr, execError.stdout, execError.message]
+			.filter(Boolean)
+			.join("\n")
+			.trim();
+		throw new Error(`registry lookup failed: ${detail || "unknown npm view error"}`);
+	}
+}
+
+/**
+ * @param {unknown} audit
+ * @param {string} packageName
+ * @param {string} version
+ * @param {string} expectedCommit
+ */
+export function validateProvenanceAudit(audit, packageName, version, expectedCommit) {
+	if (!audit || typeof audit !== "object") {
+		throw new Error("npm audit signatures output must be an object");
+	}
+	const record = /** @type {{ invalid?: unknown[]; missing?: unknown[]; verified?: Array<{ name?: string; attestationBundles?: unknown[] }> }} */ (
+		audit
+	);
+	if ((record.invalid ?? []).length > 0) {
+		throw new Error(`invalid registry signatures: ${JSON.stringify(record.invalid)}`);
+	}
+
+	const target = (record.verified ?? []).find((entry) => entry.name === packageName);
+	const provenanceEvidence = {
+		package: packageName,
+		version,
+		verifiedTargetFound: Boolean(target),
+		invalid: record.invalid ?? [],
+		missing: record.missing ?? [],
+		provenancePredicateTypes: /** @type {string[]} */ ([]),
+		sourceRepository: null,
+		sourceCommit: null,
+	};
+
+	if (target?.attestationBundles?.length) {
+		for (const bundle of target.attestationBundles) {
+			const attestation = /** @type {{ predicateType?: string; bundle?: { dsseEnvelope?: { payload?: string } } } } */ (
+				bundle
+			);
+			if (attestation.predicateType) {
+				provenanceEvidence.provenancePredicateTypes.push(attestation.predicateType);
+			}
+			const payload = attestation.bundle?.dsseEnvelope?.payload;
+			if (!payload) continue;
+			const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+			const predicate = decoded.predicate ?? decoded;
+			const sourceUri =
+				predicate?.invocation?.configSource?.uri ??
+				predicate?.buildDefinition?.externalParameters?.repository ??
+				predicate?.repository?.url ??
+				null;
+			const sourceCommit =
+				predicate?.invocation?.configSource?.digest?.gitCommit ??
+				predicate?.buildDefinition?.externalParameters?.sha ??
+				predicate?.source?.commit?.sha ??
+				null;
+			if (sourceUri) provenanceEvidence.sourceRepository = sourceUri;
+			if (sourceCommit) provenanceEvidence.sourceCommit = sourceCommit;
+		}
+	}
+
+	const hasProvenance = provenanceEvidence.provenancePredicateTypes.length > 0;
+	const canonicalRepo = "wh3at/pi-session-only-model";
+
+	if (version === "0.0.0") {
+		if (!hasProvenance) {
+			return provenanceEvidence;
+		}
+	} else {
+		if ((record.missing ?? []).length > 0) {
+			throw new Error(`missing registry signatures: ${JSON.stringify(record.missing)}`);
+		}
+		if (!hasProvenance) {
+			throw new Error(
+				`missing provenance attestations for ${packageName}@${version}; OIDC releases must carry provenance`,
+			);
+		}
+	}
+
+	if (hasProvenance) {
+		const repoText = String(provenanceEvidence.sourceRepository ?? "");
+		if (!repoText.includes(canonicalRepo)) {
+			throw new Error(`provenance repository mismatch: ${repoText}`);
+		}
+		if (provenanceEvidence.sourceCommit !== expectedCommit) {
+			throw new Error(
+				`provenance commit mismatch: expected ${expectedCommit}, received ${provenanceEvidence.sourceCommit}`,
+			);
+		}
+	}
+
+	return provenanceEvidence;
+}
+
+/**
  * @param {string} filePath
  */
 export async function sha256File(filePath) {
@@ -242,7 +381,13 @@ export async function smokeExtensionFromExtracted(extensionSourceDir, repoRoot =
 			noTools: "all",
 		}));
 		await session.bindExtensions({ mode: "print" });
-		assert.equal(typeof session.prompt, "function");
+		assert.equal(session.model?.id, "m1", "expected default model before session-only-model");
+		await session.prompt("/session-only-model test/m2");
+		assert.equal(
+			session.model?.id,
+			"m2",
+			"session-only-model must load the requested temporary model from the packaged extension",
+		);
 	} finally {
 		await fixture.cleanup(session);
 	}

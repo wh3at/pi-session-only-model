@@ -12,8 +12,8 @@ on:
         required: false
         type: string
       expected_digest:
-        description: Optional SHA-256 hex digest of the published tarball
-        required: false
+        description: SHA-256 hex digest of the published tarball (64 lowercase hex chars)
+        required: true
         type: string
       probe_unavailable:
         description: Safe probe — fail on a non-existent version without publish/OIDC paths
@@ -77,6 +77,11 @@ jobs:
             exit 1
           fi
 
+          if ! grep -Fq 'expected_digest must be 64 lowercase hex characters' "$workflow"; then
+            echo "verify-release must require and validate expected_digest"
+            exit 1
+          fi
+
           echo "verify-release workflow policy checks passed"
 
   probe-unavailable:
@@ -136,6 +141,7 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
           EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          EXPECTED_DIGEST: ${{ inputs.expected_digest }}
         run: |
           set -euo pipefail
           mkdir -p verification-evidence
@@ -155,7 +161,17 @@ jobs:
             exit 1
           fi
 
-          echo "inputs ok version=${INPUT_VERSION} expected_commit=${EXPECTED_COMMIT}"
+          if [ -z "$EXPECTED_DIGEST" ]; then
+            echo "expected_digest is required for published verification"
+            exit 1
+          fi
+
+          if ! printf '%s' "$EXPECTED_DIGEST" | grep -Eq '^[a-f0-9]{64}$'; then
+            echo "expected_digest must be 64 lowercase hex characters"
+            exit 1
+          fi
+
+          echo "inputs ok version=${INPUT_VERSION} expected_commit=${EXPECTED_COMMIT} expected_digest=${EXPECTED_DIGEST}"
 
       - name: Verify npm registry metadata and digest
         id: registry
@@ -182,7 +198,10 @@ jobs:
           const execFileAsync = promisify(execFile);
           const version = process.env.INPUT_VERSION;
           const expectedCommit = process.env.EXPECTED_COMMIT;
-          const expectedDigest = process.env.EXPECTED_DIGEST?.trim();
+          const expectedDigest = process.env.EXPECTED_DIGEST?.trim() ?? "";
+          if (!/^[a-f0-9]{64}$/.test(expectedDigest)) {
+            throw new Error("expected_digest must be 64 lowercase hex characters");
+          }
           const packageName = process.env.PACKAGE_NAME;
           const canonicalRepo = process.env.CANONICAL_REPO;
           const canonicalRepoUrl = process.env.CANONICAL_REPO_URL;
@@ -214,7 +233,7 @@ jobs:
           }
           const tarballBytes = Buffer.from(await tarballResponse.arrayBuffer());
           const digest = createHash("sha256").update(tarballBytes).digest("hex");
-          if (expectedDigest && digest !== expectedDigest) {
+          if (digest !== expectedDigest) {
             throw new Error(`digest mismatch: expected ${expectedDigest}, received ${digest}`);
           }
 
@@ -282,77 +301,49 @@ jobs:
           mkdir -p /tmp/npm-provenance && cd /tmp/npm-provenance
           npm init -y >/dev/null 2>&1
           npm install "${PACKAGE_NAME}@${INPUT_VERSION}" --ignore-scripts --no-save >/dev/null 2>&1
+          audit_exit=0
           if ! npm audit signatures --json --include-attestations > audit.json 2>audit.stderr; then
-            if [ ! -s audit.json ]; then
-              echo "npm audit signatures did not produce JSON output"
-              cat audit.stderr
-              exit 1
-            fi
+            audit_exit=1
+          fi
+          if [ ! -s audit.json ]; then
+            echo "npm audit signatures did not produce JSON output"
+            cat audit.stderr
+            exit 1
           fi
 
-          node --input-type=module <<'NODE'
+          export AUDIT_EXIT="$audit_exit"
+          node --experimental-strip-types <<'NODE'
           import { readFile, writeFile } from "node:fs/promises";
+          import { join } from "node:path";
+          import { pathToFileURL } from "node:url";
+
+          const verifyModule = pathToFileURL(
+            join(process.env.GITHUB_WORKSPACE, "scripts/verify-package.mjs"),
+          ).href;
+          const { validateProvenanceAudit } = await import(verifyModule);
 
           const version = process.env.INPUT_VERSION;
           const expectedCommit = process.env.EXPECTED_COMMIT;
           const packageName = process.env.PACKAGE_NAME;
-          const canonicalRepo = process.env.CANONICAL_REPO;
+          const auditExit = Number(process.env.AUDIT_EXIT ?? "0");
 
-          const audit = JSON.parse(await readFile("audit.json", "utf8"));
-          const target = (audit.verified ?? []).find((entry) => entry.name === packageName);
-          const provenanceEvidence = {
-            package: packageName,
-            version,
-            verifiedTargetFound: Boolean(target),
-            invalid: audit.invalid ?? [],
-            missing: audit.missing ?? [],
-            provenancePredicateTypes: [],
-            sourceRepository: null,
-            sourceCommit: null,
-          };
-
-          if (target?.attestationBundles?.length) {
-            for (const bundle of target.attestationBundles) {
-              provenanceEvidence.provenancePredicateTypes.push(bundle.predicateType);
-              const payload = bundle.bundle?.dsseEnvelope?.payload;
-              if (!payload) continue;
-              const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-              const subjectDigest =
-                decoded.subject?.[0]?.digest?.sha512 ?? decoded.subject?.[0]?.digest?.sha256 ?? null;
-              provenanceEvidence.subjectDigest = subjectDigest;
-              const predicate = decoded.predicate ?? decoded;
-              const sourceUri =
-                predicate?.invocation?.configSource?.uri ??
-                predicate?.buildDefinition?.externalParameters?.repository ??
-                predicate?.repository?.url ??
-                null;
-              const sourceCommit =
-                predicate?.invocation?.configSource?.digest?.gitCommit ??
-                predicate?.buildDefinition?.externalParameters?.sha ??
-                predicate?.source?.commit?.sha ??
-                null;
-              if (sourceUri) provenanceEvidence.sourceRepository = sourceUri;
-              if (sourceCommit) provenanceEvidence.sourceCommit = sourceCommit;
-            }
+          let audit;
+          try {
+            audit = JSON.parse(await readFile("audit.json", "utf8"));
+          } catch (error) {
+            throw new Error(
+              `npm audit signatures output is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+            );
           }
 
-          const hasProvenance = provenanceEvidence.provenancePredicateTypes.length > 0;
-          if (hasProvenance) {
-            const repoText = String(provenanceEvidence.sourceRepository ?? "");
-            if (!repoText.includes(canonicalRepo)) {
-              throw new Error(`provenance repository mismatch: ${repoText}`);
-            }
-            if (provenanceEvidence.sourceCommit !== expectedCommit) {
-              throw new Error(
-                `provenance commit mismatch: expected ${expectedCommit}, received ${provenanceEvidence.sourceCommit}`,
-              );
-            }
-          } else if (version !== "0.0.0") {
-            throw new Error(
-              `missing provenance attestations for ${packageName}@${version}; OIDC releases must carry provenance`,
+          const provenanceEvidence = validateProvenanceAudit(audit, packageName, version, expectedCommit);
+          if (auditExit !== 0 && version !== "0.0.0" && !provenanceEvidence.provenancePredicateTypes.length) {
+            throw new Error("npm audit signatures command failed without valid target attestations");
+          }
+          if (version === "0.0.0" && !provenanceEvidence.provenancePredicateTypes.length) {
+            console.log(
+              "bootstrap 0.0.0 without provenance attestations — digest and tag checks remain authoritative",
             );
-          } else {
-            console.log("bootstrap 0.0.0 without provenance attestations — digest and tag checks remain authoritative");
           }
 
           await writeFile(

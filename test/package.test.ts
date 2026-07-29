@@ -5,9 +5,68 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 // @ts-ignore JavaScript verification module without generated declarations.
-import { assertPackFileList, expectedPackPaths, packOnce, validatePiManifest, verifyPackage } from "../scripts/verify-package.mjs";
+import { assertPackFileList, classifyNpmViewFailure, expectedPackPaths, packOnce, validatePiManifest, validateProvenanceAudit, verifyPackage } from "../scripts/verify-package.mjs";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+
+test("classifyNpmViewFailure distinguishes verified 404 from other lookup failures", () => {
+	assert.equal(classifyNpmViewFailure("npm ERR! code E404", "", ""), "not-found");
+	assert.equal(classifyNpmViewFailure("", "", "404 Not Found - GET https://registry.npmjs.org/foo"), "not-found");
+	assert.equal(
+		classifyNpmViewFailure("npm ERR! code E429", "rate limit exceeded", ""),
+		"error",
+	);
+	assert.equal(
+		classifyNpmViewFailure("npm ERR! code E401", "Unauthorized", ""),
+		"error",
+	);
+});
+
+test("validateProvenanceAudit rejects invalid signatures for bootstrap versions", () => {
+	assert.throws(
+		() =>
+			validateProvenanceAudit(
+				{ invalid: [{ name: "pi-session-only-model" }], verified: [], missing: [] },
+				"pi-session-only-model",
+				"0.0.0",
+				"a".repeat(40),
+			),
+		/invalid registry signatures/i,
+	);
+});
+
+test("validateProvenanceAudit allows bootstrap 0.0.0 without provenance", () => {
+	const evidence = validateProvenanceAudit(
+		{ invalid: [], verified: [], missing: [{ name: "pi-session-only-model" }] },
+		"pi-session-only-model",
+		"0.0.0",
+		"a".repeat(40),
+	);
+	assert.equal(evidence.provenancePredicateTypes.length, 0);
+});
+
+test("validateProvenanceAudit requires provenance and rejects missing for OIDC releases", () => {
+	assert.throws(
+		() =>
+			validateProvenanceAudit(
+				{ invalid: [], verified: [], missing: [{ name: "pi-session-only-model" }] },
+				"pi-session-only-model",
+				"0.1.0",
+				"a".repeat(40),
+			),
+		/missing registry signatures/i,
+	);
+	assert.throws(
+		() =>
+			validateProvenanceAudit(
+				{ invalid: [], verified: [{ name: "pi-session-only-model", attestationBundles: [] }], missing: [] },
+				"pi-session-only-model",
+				"0.1.0",
+				"a".repeat(40),
+			),
+		/missing provenance attestations/i,
+	);
+});
 
 test("packed tarball contains only allowlisted runtime and documentation files", async () => {
 	const workDir = await mkdtemp(join(tmpdir(), "pi-session-only-model-pack-"));
