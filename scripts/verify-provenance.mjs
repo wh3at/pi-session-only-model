@@ -112,15 +112,22 @@ export function validateProvenanceAudit(audit, packageName, version, expectedCom
 			if (!payload) continue;
 			const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
 			const predicate = decoded.predicate ?? decoded;
+			const resolvedDependencies = predicate?.buildDefinition?.resolvedDependencies ?? [];
+			const sourceDependency = resolvedDependencies.find(
+				(dependency) => dependency?.digest?.gitCommit,
+			);
 			const sourceUri =
 				predicate?.invocation?.configSource?.uri ??
+				predicate?.buildDefinition?.externalParameters?.workflow?.repository ??
 				predicate?.buildDefinition?.externalParameters?.repository ??
 				predicate?.repository?.url ??
+				sourceDependency?.uri ??
 				null;
 			const sourceCommit =
 				predicate?.invocation?.configSource?.digest?.gitCommit ??
 				predicate?.buildDefinition?.externalParameters?.sha ??
 				predicate?.source?.commit?.sha ??
+				sourceDependency?.digest?.gitCommit ??
 				null;
 			if (sourceUri) provenanceEvidence.sourceRepository = sourceUri;
 			if (sourceCommit) provenanceEvidence.sourceCommit = sourceCommit;
