@@ -62,18 +62,17 @@ function acquire(
 		{
 			version: "0.80.10",
 			minimumVersion: "0.80.10",
-			maximumVersionExclusive: "0.81.0",
 			stateHost: host,
 			stateKey: Symbol("test-state"),
 		},
 	);
 }
 
-test("version range is minimum-inclusive and maximum-exclusive", () => {
-	assert.equal(isVersionSupported("0.80.10", "0.80.10", "0.81.0"), true);
-	assert.equal(isVersionSupported("0.80.99-dev.1", "0.80.10", "0.81.0"), true);
-	assert.equal(isVersionSupported("0.80.9", "0.80.10", "0.81.0"), false);
-	assert.equal(isVersionSupported("0.81.0", "0.80.10", "0.81.0"), false);
+test("version support is minimum-inclusive with no upper bound", () => {
+	assert.equal(isVersionSupported("0.80.10", "0.80.10"), true);
+	assert.equal(isVersionSupported("0.80.99-dev.1", "0.80.10"), true);
+	assert.equal(isVersionSupported("0.82.1", "0.80.10"), true);
+	assert.equal(isVersionSupported("0.80.9", "0.80.10"), false);
 });
 
 test("normal writes remain unchanged outside /session-only-model", () => {
@@ -179,9 +178,8 @@ test("unsupported Pi versions disable only this command guard", () => {
 	const lease = acquireGuard(
 		{ SettingsManager: FakeSettingsManager, SessionManager: FakeSessionManager },
 		{
-			version: "0.81.0",
+			version: "0.80.9",
 			minimumVersion: "0.80.10",
-			maximumVersionExclusive: "0.81.0",
 			stateHost: {},
 			stateKey: Symbol("unsupported"),
 		},
@@ -191,4 +189,18 @@ test("unsupported Pi versions disable only this command guard", () => {
 	const settings = new FakeSettingsManager();
 	settings.setDefaultModel("normal");
 	assert.deepEqual(settings.writes, ["model:normal"]);
+});
+
+test("restore filter is confirmed when entry-type literals are present", () => {
+	const { FakeSettingsManager, FakeSessionManager } = makeClasses();
+	const lease = acquire(FakeSettingsManager, FakeSessionManager);
+	assert.equal(lease.restoreFilterAssumed, false);
+});
+
+test("restore filter is assumed when entry-type literals are missing", () => {
+	const { FakeSettingsManager, FakeSessionManager } = makeClasses();
+	FakeSessionManager.prototype.appendModelChange = function () { return ""; };
+	FakeSessionManager.prototype.appendThinkingLevelChange = function () { return ""; };
+	const lease = acquire(FakeSettingsManager, FakeSessionManager);
+	assert.equal(lease.restoreFilterAssumed, true);
 });

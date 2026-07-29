@@ -20,7 +20,6 @@ export interface GuardTargets {
 export interface GuardOptions {
 	version: string;
 	minimumVersion: string;
-	maximumVersionExclusive: string;
 	allowUntestedVersion?: boolean;
 	stateHost?: object;
 	stateKey?: symbol;
@@ -29,6 +28,7 @@ export interface GuardOptions {
 export interface GuardLease {
 	readonly compatible: boolean;
 	readonly reason?: string;
+	readonly restoreFilterAssumed: boolean;
 	markSessionReady(sessionManager: object): void;
 	markSessionClosed(sessionManager: object): void;
 	runSessionOnly<T>(operation: () => T): T;
@@ -49,6 +49,7 @@ interface SharedGuardState {
 	settingsPrototype?: object;
 	sessionPrototype?: object;
 	originalGetBranch?: AnyMethod;
+	restoreFilterAssumed: boolean;
 }
 
 const DEFAULT_STATE_KEY = Symbol.for("pi-session-only-model.guard.v3");
@@ -80,16 +81,11 @@ function compareVersion(a: readonly number[], b: readonly number[]): number {
 	return 0;
 }
 
-export function isVersionSupported(
-	version: string,
-	minimumVersion: string,
-	maximumVersionExclusive: string,
-): boolean {
+export function isVersionSupported(version: string, minimumVersion: string): boolean {
 	const parsed = parseVersion(version);
 	const minimum = parseVersion(minimumVersion);
-	const maximum = parseVersion(maximumVersionExclusive);
-	if (!parsed || !minimum || !maximum) return false;
-	return compareVersion(parsed, minimum) >= 0 && compareVersion(parsed, maximum) < 0;
+	if (!parsed || !minimum) return false;
+	return compareVersion(parsed, minimum) >= 0;
 }
 
 function getState(host: object, key: symbol): SharedGuardState {
@@ -113,6 +109,7 @@ function getState(host: object, key: symbol): SharedGuardState {
 		installed: false,
 		readySessionManagers: new WeakSet<object>(),
 		storage: new AsyncLocalStorage<SuppressionContext>(),
+		restoreFilterAssumed: false,
 	};
 	record[key] = created;
 	return created;
@@ -192,6 +189,17 @@ function shouldSuppressRestore(state: SharedGuardState, receiver: unknown, branc
 	return readLatestRestorePolicy(entries)?.suppressRestore === true;
 }
 
+function entryTypeLiteralsPresent(sessionPrototype: object): boolean {
+	const modelChange = Object.getOwnPropertyDescriptor(sessionPrototype, "appendModelChange")?.value;
+	const thinkingChange = Object.getOwnPropertyDescriptor(sessionPrototype, "appendThinkingLevelChange")?.value;
+	return (
+		typeof modelChange === "function" &&
+		String(modelChange).includes("model_change") &&
+		typeof thinkingChange === "function" &&
+		String(thinkingChange).includes("thinking_level_change")
+	);
+}
+
 function installPatches(state: SharedGuardState, targets: GuardTargets): void {
 	const settingsPrototype = targets.SettingsManager.prototype;
 	const sessionPrototype = targets.SessionManager.prototype;
@@ -206,6 +214,7 @@ function installPatches(state: SharedGuardState, targets: GuardTargets): void {
 		}
 		return;
 	}
+	state.restoreFilterAssumed = !entryTypeLiteralsPresent(sessionPrototype);
 
 	state.settingsPrototype = settingsPrototype;
 	state.sessionPrototype = sessionPrototype;
@@ -263,6 +272,7 @@ function incompatibleLease(reason: string): GuardLease {
 	return {
 		compatible: false,
 		reason,
+		restoreFilterAssumed: false,
 		markSessionReady: () => {},
 		markSessionClosed: () => {},
 		runSessionOnly: (operation) => operation(),
@@ -277,12 +287,9 @@ export function acquireGuard(targets: GuardTargets, options: GuardOptions): Guar
 	deactivateLegacyGuard(host);
 
 	const versionAllowed =
-		options.allowUntestedVersion === true ||
-		isVersionSupported(options.version, options.minimumVersion, options.maximumVersionExclusive);
+		options.allowUntestedVersion === true || isVersionSupported(options.version, options.minimumVersion);
 	if (!versionAllowed) {
-		return incompatibleLease(
-			`Pi ${options.version} is outside the tested range ${options.minimumVersion} <= version < ${options.maximumVersionExclusive}`,
-		);
+		return incompatibleLease(`Pi ${options.version} is older than the required minimum ${options.minimumVersion}`);
 	}
 
 	let state: SharedGuardState;
@@ -295,6 +302,7 @@ export function acquireGuard(targets: GuardTargets, options: GuardOptions): Guar
 
 	return {
 		compatible: true,
+		restoreFilterAssumed: state.restoreFilterAssumed,
 		markSessionReady(sessionManager: object): void {
 			state.readySessionManagers.add(sessionManager);
 		},

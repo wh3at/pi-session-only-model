@@ -38,7 +38,6 @@ interface RuntimeState {
 const EXTENSION_NAME = "pi-session-only-model";
 const STATUS_KEY = EXTENSION_NAME;
 const MINIMUM_PI_VERSION = "0.80.10";
-const MAXIMUM_PI_VERSION_EXCLUSIVE = "0.81.0";
 const RUNTIME_STATE_KEY = Symbol.for("pi-session-only-model.runtime.v2");
 
 const USAGE = [
@@ -234,16 +233,24 @@ export default function sessionOnlyModel(pi: ExtensionAPI): void {
 		{
 			version: VERSION,
 			minimumVersion: MINIMUM_PI_VERSION,
-			maximumVersionExclusive: MAXIMUM_PI_VERSION_EXCLUSIVE,
 			allowUntestedVersion: process.env.PI_SESSION_ONLY_MODEL_ALLOW_UNTESTED === "1",
 		},
 	);
+	let restoreFilterWarningShown = false;
 
 	pi.on("session_start", (event, ctx) => {
 		lease.markSessionReady(ctx.sessionManager as object);
 		const id = sessionId(ctx);
 		if (event.reason !== "reload") state.activeOverride = undefined;
 		state.restoreSuppressionSessionId = latestRestorePolicy(ctx)?.suppressRestore ? id : undefined;
+		if (lease.restoreFilterAssumed && !restoreFilterWarningShown) {
+			restoreFilterWarningShown = true;
+			ctx.ui.notify(
+				`${EXTENSION_NAME}: could not confirm Pi's model_change/thinking_level_change entry types on Pi ${VERSION}; ` +
+					"restore suppression may not take effect. Normal /model behavior is unchanged.",
+				"warning",
+			);
+		}
 		updateStatus(state, pi, ctx);
 	});
 

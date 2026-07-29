@@ -21,10 +21,6 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "piCompatibility": {
-    "tested": "0.80.10",
-    "range": ">=0.80.10 <0.81.0"
-  },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.80.10",
     "@earendil-works/pi-ai": "0.80.10",
