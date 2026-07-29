@@ -63,56 +63,6 @@ export function assertPackFileList(actualFiles, allowedPaths) {
 }
 
 /**
- * @param {string} stderr
- * @param {string} stdout
- * @param {string} message
- * @returns {"not-found" | "exists" | "error"}
- */
-export function classifyNpmViewFailure(stderr, stdout, message) {
-	const combined = `${stderr}\n${stdout}\n${message}`;
-	if (/\bE404\b/.test(combined) || /404 Not Found/i.test(combined) || /Not found/i.test(combined)) {
-		return "not-found";
-	}
-	if (/EEXIST|already exists/i.test(combined)) {
-		return "exists";
-	}
-	return "error";
-}
-
-/**
- * @param {string} packageName
- * @param {string} version
- */
-export async function assertRegistryVersionAbsent(packageName, version) {
-	try {
-		await execFileAsync("npm", ["view", `${packageName}@${version}`, "version"], {
-			env: process.env,
-		});
-		throw new Error(`registry version already exists: ${packageName}@${version}`);
-	} catch (error) {
-		if (error instanceof Error && error.message.includes("already exists")) {
-			throw error;
-		}
-		const execError = /** @type {NodeJS.ErrnoException & { stdout?: string; stderr?: string }} */ (
-			error
-		);
-		const outcome = classifyNpmViewFailure(
-			String(execError.stderr ?? ""),
-			String(execError.stdout ?? ""),
-			String(execError.message ?? ""),
-		);
-		if (outcome === "not-found") {
-			return;
-		}
-		const detail = [execError.stderr, execError.stdout, execError.message]
-			.filter(Boolean)
-			.join("\n")
-			.trim();
-		throw new Error(`registry lookup failed: ${detail || "unknown npm view error"}`);
-	}
-}
-
-/**
  * @param {unknown} audit
  * @param {string} packageName
  * @param {string} version

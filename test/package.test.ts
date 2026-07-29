@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import test from "node:test";
 // @ts-ignore JavaScript verification module without generated declarations.
-import { assertPackFileList, classifyNpmViewFailure, expectedPackPaths, packOnce, validatePiManifest, validateProvenanceAudit, verifyPackage } from "../scripts/verify-package.mjs";
+import { assertRegistryVersionAbsent, classifyNpmViewFailure } from "../scripts/check-registry-version.mjs";
+// @ts-ignore JavaScript verification module without generated declarations.
+import { assertPackFileList, expectedPackPaths, packOnce, validatePiManifest, validateProvenanceAudit, verifyPackage } from "../scripts/verify-package.mjs";
 
+const execFileAsync = promisify(execFile);
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 test("classifyNpmViewFailure distinguishes verified 404 from other lookup failures", () => {
@@ -20,6 +25,88 @@ test("classifyNpmViewFailure distinguishes verified 404 from other lookup failur
 		classifyNpmViewFailure("npm ERR! code E401", "Unauthorized", ""),
 		"error",
 	);
+});
+
+async function makeIsolatedRegistryCheckFixture() {
+	const workDir = await mkdtemp(join(tmpdir(), "pi-registry-check-"));
+	const binDir = join(workDir, "bin");
+	await mkdir(binDir, { recursive: true });
+	await cp(
+		join(packageRoot, "scripts/check-registry-version.mjs"),
+		join(workDir, "check-registry-version.mjs"),
+	);
+	const fakeNpmPath = join(binDir, "npm");
+	const fakeNpmScript = `#!/usr/bin/env node
+const args = process.argv.slice(2);
+const spec = args[1] ?? "";
+if (spec.includes("absent-version")) {
+  console.error("npm ERR! code E404");
+  console.error("404 Not Found - GET https://registry.npmjs.org/test-package");
+  process.exit(1);
+}
+if (spec.includes("present-version")) {
+  console.log("1.0.0");
+  process.exit(0);
+}
+if (spec.includes("outage-version")) {
+  console.error("npm ERR! code E429");
+  console.error("rate limit exceeded");
+  process.exit(1);
+}
+console.error("unexpected npm invocation");
+process.exit(2);
+`;
+	await writeFile(fakeNpmPath, fakeNpmScript, "utf8");
+	await chmod(fakeNpmPath, 0o755);
+	return { workDir, binDir, fakeNpmPath };
+}
+
+test("check-registry-version subprocess runs without node_modules", async () => {
+	const { workDir, binDir, fakeNpmPath } = await makeIsolatedRegistryCheckFixture();
+	const scriptPath = join(workDir, "check-registry-version.mjs");
+	const env = {
+		...process.env,
+		PATH: `${binDir}:${process.env.PATH}`,
+		NPM_BIN: fakeNpmPath,
+	};
+	try {
+		const absent = await execFileAsync(process.execPath, [
+			scriptPath,
+			"test-package",
+			"absent-version",
+		], { cwd: workDir, env });
+		assert.match(absent.stdout, /registry version not found/i);
+
+		await assert.rejects(
+			() =>
+				execFileAsync(process.execPath, [scriptPath, "test-package", "present-version"], {
+					cwd: workDir,
+					env,
+				}),
+			/already exists/i,
+		);
+
+		await assert.rejects(
+			() =>
+				execFileAsync(process.execPath, [scriptPath, "test-package", "outage-version"], {
+					cwd: workDir,
+					env,
+				}),
+			/registry lookup failed/i,
+		);
+
+		await assertRegistryVersionAbsent("test-package", "absent-version", { npmPath: fakeNpmPath });
+		await assert.rejects(
+			() => assertRegistryVersionAbsent("test-package", "present-version", { npmPath: fakeNpmPath }),
+			/already exists/i,
+		);
+		await assert.rejects(
+			() => assertRegistryVersionAbsent("test-package", "outage-version", { npmPath: fakeNpmPath }),
+			/registry lookup failed/i,
+		);
+	} finally {
+		await rm(workDir, { recursive: true, force: true });
+	}
 });
 
 test("validateProvenanceAudit rejects invalid signatures for bootstrap versions", () => {
