@@ -1,6 +1,6 @@
 {
   "name": "pi-session-only-model",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Add /session-only-model for temporary Pi model selection without changing normal /model behavior or settings defaults.",
   "type": "module",
   "license": "MIT",
@@ -9,6 +9,25 @@
     "pi-extension",
     "pi-coding-agent"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wh3at/pi-session-only-model.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wh3at/pi-session-only-model/issues"
+  },
+  "homepage": "https://github.com/wh3at/pi-session-only-model#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "index.ts",
+    "guard.ts",
+    "command.ts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "pi": {
     "extensions": [
       "./index.ts"
@@ -16,10 +35,14 @@
   },
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "package:verify": "node --experimental-strip-types scripts/verify-package.mjs"
   },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.80.10",

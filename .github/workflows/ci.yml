@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  workflow-policy:
+    name: Workflow policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Enforce contribution workflow policy
+        run: |
+          set -euo pipefail
+          workflow=".github/workflows/ci.yml"
+
+          if grep -Eq '^[[:space:]]*pull_request_target:' "$workflow"; then
+            echo "pull_request_target is forbidden in contribution CI"
+            exit 1
+          fi
+
+          if grep -Eq 'id-token:[[:space:]]*write|packages:[[:space:]]*write|contents:[[:space:]]*write' "$workflow"; then
+            echo "write permissions are forbidden in contribution CI"
+            exit 1
+          fi
+
+          if grep -Eq '\$\{\{[[:space:]]*secrets\.|^[[:space:]]*environment:' "$workflow"; then
+            echo "secrets and protected environments are forbidden in contribution CI"
+            exit 1
+          fi
+
+          unpinned="$(grep -E '^[[:space:]]*uses:' "$workflow" | grep -Ev '@[0-9a-f]{40}' || true)"
+          if [ -n "$unpinned" ]; then
+            echo "every uses: reference must be pinned to a full commit SHA"
+            echo "$unpinned"
+            exit 1
+          fi
+
+          echo "workflow policy checks passed"
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+
+  validate-node24:
+    name: Validate (Node 24)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Verify publish artifact
+        run: npm run package:verify
+
+  smoke-node22:
+    name: Packed smoke (Node 22.19.x)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js 22.19.x
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
+        with:
+          node-version: "22.19.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify packed artifact smoke
+        run: npm run package:verify
+
+  pi-compatibility:
+    name: Pi compatibility (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: minimum
+            pi_version: "0.80.10"
+          - label: current
+            pi_version: current
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve Pi version
+        id: pi
+        run: |
+          if [ "${{ matrix.pi_version }}" = "current" ]; then
+            version="$(npm view @earendil-works/pi-coding-agent version)"
+          else
+            version="${{ matrix.pi_version }}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Testing against Pi $version"
+
+      - name: Install Pi compatibility endpoint
+        run: |
+          npm install --no-save \
+            "@earendil-works/pi-coding-agent@${{ steps.pi.outputs.version }}" \
+            "@earendil-works/pi-ai@${{ steps.pi.outputs.version }}" \
+            "@earendil-works/pi-agent-core@${{ steps.pi.outputs.version }}"
+
+      - name: Test against Pi ${{ steps.pi.outputs.version }}
+        run: npm test

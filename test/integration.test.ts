@@ -1,70 +1,19 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	createAgentSession,
-	ModelRuntime,
 	SessionManager,
 	SettingsManager,
 	type AgentSession,
 } from "@earendil-works/pi-coding-agent";
+// @ts-ignore JavaScript verification module without generated declarations.
+import { makeFixture, smokeExtensionFromExtracted, verifyPackage } from "../scripts/verify-package.mjs";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-
-async function makeFixture() {
-	const root = await mkdtemp(join(tmpdir(), "pi-session-only-model-integration-"));
-	const cwd = join(root, "cwd");
-	const agentDir = join(root, "agent");
-	const extensionDir = join(agentDir, "extensions", "pi-session-only-model");
-	await mkdir(cwd, { recursive: true });
-	await mkdir(extensionDir, { recursive: true });
-	for (const file of ["index.ts", "guard.ts", "command.ts"]) {
-		await cp(join(packageRoot, file), join(extensionDir, file));
-	}
-	await writeFile(
-		join(agentDir, "settings.json"),
-		JSON.stringify(
-			{ defaultProvider: "test", defaultModel: "m1", defaultThinkingLevel: "medium" },
-			null,
-			2,
-		),
-		"utf8",
-	);
-
-	const modelRuntime = await ModelRuntime.create({ modelsPath: null, allowModelNetwork: false });
-	modelRuntime.registerProvider("test", {
-		baseUrl: "https://example.invalid/v1",
-		apiKey: "dummy",
-		api: "openai-completions",
-		models: ["m1", "m2", "m3"].map((id) => ({
-			id,
-			name: id,
-			reasoning: true,
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 10_000,
-			maxTokens: 1_000,
-		})),
-	});
-
-	return {
-		root,
-		cwd,
-		agentDir,
-		modelRuntime,
-		async cleanup(session?: AgentSession) {
-			if (session) {
-				await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-				session.dispose();
-			}
-			await rm(root, { recursive: true, force: true });
-		},
-	};
-}
 
 function temporaryAssistant(): AssistantMessage {
 	return {
@@ -87,7 +36,7 @@ function temporaryAssistant(): AssistantMessage {
 }
 
 test("/session-only-model is ephemeral while a normal model change remains persistent", async () => {
-	const fixture = await makeFixture();
+	const fixture = await makeFixture({ repoRoot: packageRoot });
 	let session: AgentSession | undefined;
 	try {
 		const settingsManager = SettingsManager.create(fixture.cwd, fixture.agentDir);
@@ -136,8 +85,19 @@ test("/session-only-model is ephemeral while a normal model change remains persi
 	}
 });
 
+test("packed artifact loads through Pi integration fixture", async () => {
+	const verified = await verifyPackage({ packageRoot, keepWorkDir: true });
+	try {
+		await smokeExtensionFromExtracted(verified.extractedDir, packageRoot);
+	} finally {
+		if (verified.workDir) {
+			await rm(verified.workDir, { recursive: true, force: true });
+		}
+	}
+});
+
 test("a transcript produced by the temporary model resumes from settings defaults", async () => {
-	const fixture = await makeFixture();
+	const fixture = await makeFixture({ repoRoot: packageRoot });
 	let currentSession: AgentSession | undefined;
 	try {
 		const sessionManager = SessionManager.inMemory(fixture.cwd);

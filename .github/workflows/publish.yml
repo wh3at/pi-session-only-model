@@ -1,0 +1,246 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  workflow-policy:
+    name: Workflow policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Enforce publish workflow policy
+        run: |
+          set -euo pipefail
+          workflow=".github/workflows/publish.yml"
+
+          if grep -Eq '^[[:space:]]*pull_request_target:' "$workflow"; then
+            echo "pull_request_target is forbidden in publish workflow"
+            exit 1
+          fi
+
+          unpinned="$(grep -E '^[[:space:]]*uses:' "$workflow" | grep -Ev '@[0-9a-f]{40}' || true)"
+          if [ -n "$unpinned" ]; then
+            echo "every uses: reference must be pinned to a full commit SHA"
+            echo "$unpinned"
+            exit 1
+          fi
+
+          publish_job="$(awk '/^  publish:/{flag=1} flag && /^  [^ ]/{if ($1 != "publish:") exit} flag{print}' "$workflow")"
+          if [ -z "$publish_job" ]; then
+            echo "publish job is required"
+            exit 1
+          fi
+
+          if echo "$publish_job" | grep -Eq '\$\{\{[[:space:]]*secrets\.|NODE_AUTH_TOKEN|NPM_TOKEN[[:space:]]*='; then
+            echo "publish job must not use repository secrets or NPM_TOKEN"
+            exit 1
+          fi
+
+          if echo "$publish_job" | grep -Eq 'npm publish.*--provenance'; then
+            echo "publish job must not pass redundant provenance flags"
+            exit 1
+          fi
+
+          if echo "$publish_job" | grep -Eq 'actions/checkout@|npm ci|npm run'; then
+            echo "publish job must not checkout source, install repository dependencies, or run repository scripts"
+            exit 1
+          fi
+
+          if echo "$publish_job" | grep -E 'npm install' | grep -Ev 'npm install -g' | grep -q .; then
+            echo "publish job must not install repository dependencies"
+            exit 1
+          fi
+
+          if ! echo "$publish_job" | grep -Eq 'id-token:[[:space:]]*write'; then
+            echo "publish job must request id-token: write for OIDC"
+            exit 1
+          fi
+
+          if echo "$publish_job" | grep -Eq 'contents:[[:space:]]*write|packages:[[:space:]]*write'; then
+            echo "publish job must not request write contents or packages permissions"
+            exit 1
+          fi
+
+          validate_job="$(awk '/^  validate:/{flag=1} flag && /^  [^ ]/{if ($1 != "validate:") exit} flag{print}' "$workflow")"
+          if echo "$validate_job" | grep -Eq 'id-token:[[:space:]]*write'; then
+            echo "validate job must not request OIDC permissions"
+            exit 1
+          fi
+
+          if ! grep -Fq 'assertRegistryVersionAbsent' "$workflow"; then
+            echo "validate job must distinguish verified npm 404 from other registry lookup failures"
+            exit 1
+          fi
+
+          echo "publish workflow policy checks passed"
+
+  validate:
+    name: Validate release
+    needs: workflow-policy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Enforce release eligibility
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          TAG_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          package_version="$(node -p "require('./package.json').version")"
+          expected_tag="v${package_version}"
+
+          if [ "$TAG_NAME" != "$expected_tag" ]; then
+            echo "tag mismatch: expected ${expected_tag}, received ${TAG_NAME}"
+            exit 1
+          fi
+
+          if ! printf '%s' "$package_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "package version must be a strict semantic version: ${package_version}"
+            exit 1
+          fi
+
+          git fetch origin main --depth=1
+          main_head="$(git rev-parse origin/main)"
+          if [ "$TAG_SHA" != "$main_head" ]; then
+            echo "tagged commit ${TAG_SHA} is not the current authorized main head ${main_head}"
+            exit 1
+          fi
+
+          export PACKAGE_VERSION="$package_version"
+          node --experimental-strip-types <<'NODE'
+          import { assertRegistryVersionAbsent } from "./scripts/verify-package.mjs";
+
+          await assertRegistryVersionAbsent("pi-session-only-model", process.env.PACKAGE_VERSION);
+          console.log(
+            `registry version not found (expected): pi-session-only-model@${process.env.PACKAGE_VERSION}`,
+          );
+          NODE
+
+          echo "release eligibility checks passed for ${TAG_NAME}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Pack and verify release artifact
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types <<'NODE'
+          import { cp, mkdir, writeFile } from "node:fs/promises";
+          import { basename } from "node:path";
+          import { verifyPackage } from "./scripts/verify-package.mjs";
+
+          const result = await verifyPackage({ keepWorkDir: true });
+          await mkdir("release-artifact", { recursive: true });
+          const destination = `release-artifact/${basename(result.tarballPath)}`;
+          await cp(result.tarballPath, destination);
+          await writeFile(
+            "release-artifact/metadata.json",
+            JSON.stringify(
+              {
+                name: result.name,
+                version: result.version,
+                digest: result.digest,
+                filename: basename(result.tarballPath),
+                files: result.files,
+              },
+              null,
+              2,
+            ),
+          );
+          console.log(
+            `release artifact ready ${result.name}@${result.version} digest=${result.digest}`,
+          );
+          NODE
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75dc225b5c5cd846dc2ae7f4873 # v4.6.2
+        with:
+          name: release-package
+          path: release-artifact/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish to npm
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b134d94915f2b2f8f969171a # v4.3.0
+        with:
+          name: release-package
+          path: release-artifact
+
+      - name: Verify artifact digest before authentication
+        run: |
+          set -euo pipefail
+          metadata="release-artifact/metadata.json"
+          if [ ! -f "$metadata" ]; then
+            echo "missing artifact metadata"
+            exit 1
+          fi
+
+          filename="$(node -p "JSON.parse(require('node:fs').readFileSync('${metadata}','utf8')).filename")"
+          expected_digest="$(node -p "JSON.parse(require('node:fs').readFileSync('${metadata}','utf8')).digest")"
+          tarball="release-artifact/${filename}"
+
+          if [ ! -f "$tarball" ]; then
+            echo "missing release tarball: ${tarball}"
+            exit 1
+          fi
+
+          actual_digest="$(sha256sum "$tarball" | awk '{print $1}')"
+          if [ "$actual_digest" != "$expected_digest" ]; then
+            echo "digest mismatch: expected ${expected_digest}, received ${actual_digest}"
+            exit 1
+          fi
+
+          echo "artifact digest verified for ${filename}"
+
+      - name: Setup Node.js 24 for OIDC
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+
+      - name: Install reviewed npm 11
+        run: npm install -g npm@11.18.0
+
+      - name: Publish exact validated tarball
+        run: |
+          set -euo pipefail
+          filename="$(node -p "JSON.parse(require('node:fs').readFileSync('release-artifact/metadata.json','utf8')).filename")"
+          npm --version
+          npm publish "release-artifact/${filename}" --access public
