@@ -180,7 +180,7 @@ jobs:
           NODE
 
       - name: Upload release artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75dc225b5c5cd846dc2ae7f4873 # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-package
           path: release-artifact/
@@ -198,7 +198,7 @@ jobs:
       id-token: write
     steps:
       - name: Download release artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b134d94915f2b2f8f969171a # v4.3.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-package
           path: release-artifact
