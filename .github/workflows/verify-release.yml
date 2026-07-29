@@ -82,6 +82,36 @@ jobs:
             exit 1
           fi
 
+          if grep -Eq 'join\([^)]*scripts/verify-package\.mjs' "$workflow"; then
+            echo "verify-release must not import verify-package.mjs (Pi dependencies)"
+            exit 1
+          fi
+
+          if ! grep -Fq 'scripts/verify-provenance.mjs' "$workflow"; then
+            echo "verify-release must use dependency-free scripts/verify-provenance.mjs"
+            exit 1
+          fi
+
+          provenance_step="$(sed -n '/^      - name: Verify provenance and registry signatures$/,/^      - name: Install exact version in fresh Pi home$/p' "$workflow")"
+          if ! printf '%s' "$provenance_step" | grep -Fq -- '--save-exact'; then
+            echo "provenance install must use --save-exact so audit signatures include the target"
+            exit 1
+          fi
+          if printf '%s' "$provenance_step" | grep -Fq -- '--no-save'; then
+            echo "provenance install must not use --no-save"
+            exit 1
+          fi
+
+          catalog_step="$(sed -n '/^      - name: Poll Pi catalog with bounded hourly attempts$/,/^      - name: Upload verification evidence$/p' "$workflow")"
+          if ! printf '%s' "$catalog_step" | grep -Fq 'catalog_install_command="pi install npm:${PACKAGE_NAME}"'; then
+            echo "catalog polling must match Pi catalog unversioned install command"
+            exit 1
+          fi
+          if printf '%s' "$catalog_step" | grep -Fq 'catalog_install_command="pi install npm:${PACKAGE_NAME}@${INPUT_VERSION}"'; then
+            echo "catalog polling must not require a versioned install command"
+            exit 1
+          fi
+
           echo "verify-release workflow policy checks passed"
 
   probe-unavailable:
@@ -190,12 +220,19 @@ jobs:
           fi
 
           node --input-type=module <<'NODE'
-          import { createHash } from "node:crypto";
           import { writeFile } from "node:fs/promises";
+          import { join } from "node:path";
+          import { pathToFileURL } from "node:url";
+          import { createHash } from "node:crypto";
           import { execFile } from "node:child_process";
           import { promisify } from "node:util";
 
           const execFileAsync = promisify(execFile);
+          const verifyModule = pathToFileURL(
+            join(process.env.GITHUB_WORKSPACE, "scripts/verify-provenance.mjs"),
+          ).href;
+          const { matchesCanonicalRepository } = await import(verifyModule);
+
           const version = process.env.INPUT_VERSION;
           const expectedCommit = process.env.EXPECTED_COMMIT;
           const expectedDigest = process.env.EXPECTED_DIGEST?.trim() ?? "";
@@ -213,7 +250,7 @@ jobs:
           );
           const metadata = JSON.parse(stdout);
           const repositoryUrl = String(metadata.repository?.url ?? "");
-          if (!repositoryUrl.includes(canonicalRepo)) {
+          if (!matchesCanonicalRepository(repositoryUrl, canonicalRepo)) {
             throw new Error(`repository mismatch: ${repositoryUrl}`);
           }
 
@@ -261,20 +298,6 @@ jobs:
             );
           }
 
-          const mainHead = await fetch(
-            `https://api.github.com/repos/${canonicalRepo}/commits/main`,
-          );
-          if (!mainHead.ok) {
-            throw new Error("unable to fetch canonical main head");
-          }
-          const mainPayload = await mainHead.json();
-          const mainSha = mainPayload.sha;
-          if (mainSha !== expectedCommit) {
-            throw new Error(
-              `expected commit is not current main head: main=${mainSha} expected=${expectedCommit}`,
-            );
-          }
-
           const evidence = {
             package: packageName,
             version,
@@ -285,7 +308,6 @@ jobs:
             digest,
             tag: `v${version}`,
             tagCommit,
-            mainHead: mainSha,
             canonicalRepoUrl,
           };
           await writeFile("verification-evidence/registry.json", JSON.stringify(evidence, null, 2));
@@ -300,7 +322,7 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/npm-provenance && cd /tmp/npm-provenance
           npm init -y >/dev/null 2>&1
-          npm install "${PACKAGE_NAME}@${INPUT_VERSION}" --ignore-scripts --no-save >/dev/null 2>&1
+          npm install "${PACKAGE_NAME}@${INPUT_VERSION}" --ignore-scripts --save-exact >/dev/null 2>&1
           audit_exit=0
           if ! npm audit signatures --json --include-attestations > audit.json 2>audit.stderr; then
             audit_exit=1
@@ -318,7 +340,7 @@ jobs:
           import { pathToFileURL } from "node:url";
 
           const verifyModule = pathToFileURL(
-            join(process.env.GITHUB_WORKSPACE, "scripts/verify-package.mjs"),
+            join(process.env.GITHUB_WORKSPACE, "scripts/verify-provenance.mjs"),
           ).href;
           const { validateProvenanceAudit } = await import(verifyModule);
 
@@ -428,6 +450,8 @@ jobs:
             throw new Error(`session-only-model command did not load expected model: ${session.model?.id ?? "missing"}`);
           }
 
+          const loadedModelId = session.model.id;
+
           await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
           session.dispose();
 
@@ -437,7 +461,7 @@ jobs:
             installCommand: `pi install npm:${packageName}@${version}`,
             agentDir,
             cwd,
-            loadedModelId: session.model?.id,
+            loadedModelId,
             devDependenciesUsed: false,
           };
           await writeFile(
@@ -458,7 +482,8 @@ jobs:
           found=false
           max_attempts="${CATALOG_POLL_MAX_ATTEMPTS}"
           interval="${CATALOG_POLL_INTERVAL_SECONDS}"
-          install_command="pi install npm:${PACKAGE_NAME}@${INPUT_VERSION}"
+          catalog_install_command="pi install npm:${PACKAGE_NAME}"
+          exact_install_command="pi install npm:${PACKAGE_NAME}@${INPUT_VERSION}"
 
           for attempt in $(seq 1 "$max_attempts"); do
             timestamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -470,7 +495,7 @@ jobs:
             if printf '%s' "$npm_search" | grep -Fq "\"name\":\"${PACKAGE_NAME}\""; then
               npm_hit=true
             fi
-            if printf '%s' "$pi_catalog" | grep -Fq "${PACKAGE_NAME}" && printf '%s' "$pi_catalog" | grep -Fq "$install_command"; then
+            if printf '%s' "$pi_catalog" | grep -Eq "pi install npm:${PACKAGE_NAME}([\"'<>]|$)"; then
               catalog_hit=true
             fi
 
@@ -505,7 +530,8 @@ jobs:
           const evidence = {
             package: process.env.PACKAGE_NAME,
             version: process.env.INPUT_VERSION,
-            installCommand: `pi install npm:${process.env.PACKAGE_NAME}@${process.env.INPUT_VERSION}`,
+            catalogInstallCommand: `pi install npm:${process.env.PACKAGE_NAME}`,
+            exactInstallCommand: `pi install npm:${process.env.PACKAGE_NAME}@${process.env.INPUT_VERSION}`,
             maxAttempts: Number(process.env.CATALOG_POLL_MAX_ATTEMPTS),
             pollIntervalSeconds: Number(process.env.CATALOG_POLL_INTERVAL_SECONDS),
             attempts,

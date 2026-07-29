@@ -9,7 +9,9 @@ import test from "node:test";
 // @ts-ignore JavaScript verification module without generated declarations.
 import { assertRegistryVersionAbsent, classifyNpmViewFailure } from "../scripts/check-registry-version.mjs";
 // @ts-ignore JavaScript verification module without generated declarations.
-import { assertPackFileList, expectedPackPaths, packOnce, validatePiManifest, validateProvenanceAudit, verifyPackage } from "../scripts/verify-package.mjs";
+import { catalogInstallCommand, exactInstallCommand, matchesCanonicalRepository, matchesPiCatalogListing, normalizeRepositoryReference, validateProvenanceAudit } from "../scripts/verify-provenance.mjs";
+// @ts-ignore JavaScript verification module without generated declarations.
+import { assertPackFileList, expectedPackPaths, packOnce, validatePiManifest, verifyPackage } from "../scripts/verify-package.mjs";
 
 const execFileAsync = promisify(execFile);
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -157,6 +159,145 @@ test("validateProvenanceAudit requires provenance and rejects missing for OIDC r
 			),
 		/missing provenance attestations/i,
 	);
+});
+
+test("normalizeRepositoryReference accepts known git URL forms and rejects lookalikes", () => {
+	const canonical = "wh3at/pi-session-only-model";
+	assert.equal(
+		normalizeRepositoryReference("git+https://github.com/wh3at/pi-session-only-model.git"),
+		canonical,
+	);
+	assert.equal(
+		normalizeRepositoryReference("https://github.com/wh3at/pi-session-only-model"),
+		canonical,
+	);
+	assert.equal(
+		normalizeRepositoryReference("git@github.com:wh3at/pi-session-only-model.git"),
+		canonical,
+	);
+	assert.equal(normalizeRepositoryReference("github:wh3at/pi-session-only-model"), canonical);
+	assert.equal(matchesCanonicalRepository("git+https://github.com/wh3at/pi-session-only-model.git"), true);
+	assert.equal(
+		matchesCanonicalRepository("https://github.com/wh3at/pi-session-only-model-evil"),
+		false,
+	);
+	assert.equal(
+		matchesCanonicalRepository("https://github.com/evil/wh3at/pi-session-only-model"),
+		false,
+	);
+});
+
+test("validateProvenanceAudit rejects provenance from a lookalike repository", () => {
+	const commit = "f".repeat(40);
+	const slsaPayload = Buffer.from(
+		JSON.stringify({
+			predicate: {
+				buildDefinition: {
+					externalParameters: {
+						repository: "https://github.com/wh3at/pi-session-only-model-evil",
+						sha: commit,
+					},
+				},
+			},
+		}),
+		"utf8",
+	).toString("base64url");
+	assert.throws(
+		() =>
+			validateProvenanceAudit(
+				{
+					invalid: [],
+					missing: [],
+					verified: [
+						{
+							name: "pi-session-only-model",
+							attestationBundles: [
+								{
+									predicateType: "https://slsa.dev/provenance/v1",
+									bundle: { dsseEnvelope: { payload: slsaPayload } },
+								},
+							],
+						},
+					],
+				},
+				"pi-session-only-model",
+				"0.1.3",
+				commit,
+			),
+		/provenance repository mismatch/i,
+	);
+});
+
+test("matchesPiCatalogListing uses unversioned Pi catalog install commands", async () => {
+	const catalogHtml = await readFile(
+		join(packageRoot, "test/fixtures/pi-catalog-sample.html"),
+		"utf8",
+	);
+	const packageName = "pi-session-only-model";
+	assert.equal(catalogInstallCommand(packageName), "pi install npm:pi-session-only-model");
+	assert.equal(exactInstallCommand(packageName, "0.1.3"), "pi install npm:pi-session-only-model@0.1.3");
+	assert.equal(matchesPiCatalogListing(catalogHtml, packageName), true);
+	assert.equal(matchesPiCatalogListing(catalogHtml, "pi-mcp-adapter"), true);
+	assert.equal(matchesPiCatalogListing(catalogHtml, "missing-package"), false);
+	assert.equal(
+		matchesPiCatalogListing(
+			catalogHtml.replaceAll("pi install npm:pi-session-only-model", "pi install npm:pi-session-only-model@0.1.3"),
+			packageName,
+		),
+		false,
+	);
+});
+
+test("verify-release workflow keeps provenance and catalog verification contracts", async () => {
+	const workflow = await readFile(join(packageRoot, ".github/workflows/verify-release.yml"), "utf8");
+	const provenanceStep =
+		workflow.match(
+			/^      - name: Verify provenance and registry signatures[\s\S]*?^      - name: Install exact version in fresh Pi home/m,
+		)?.[0] ?? "";
+	const catalogStep =
+		workflow.match(
+			/^      - name: Poll Pi catalog with bounded hourly attempts[\s\S]*?^      - name: Upload verification evidence/m,
+		)?.[0] ?? "";
+
+	assert.match(provenanceStep, /--save-exact/);
+	assert.doesNotMatch(provenanceStep, /--no-save/);
+	assert.match(catalogStep, /catalog_install_command="pi install npm:\$\{PACKAGE_NAME\}"/);
+	assert.doesNotMatch(catalogStep, /catalog_install_command="pi install npm:\$\{PACKAGE_NAME\}@\$\{INPUT_VERSION\}"/);
+	assert.match(catalogStep, /exact_install_command="pi install npm:\$\{PACKAGE_NAME\}@\$\{INPUT_VERSION\}"/);
+	assert.match(catalogStep, /catalogInstallCommand:/);
+	assert.match(catalogStep, /exactInstallCommand:/);
+	assert.match(catalogStep, /grep -Eq "pi install npm:\$\{PACKAGE_NAME\}\(\[\\"'<>]\|\$\)"/);
+});
+
+test("verify-provenance subprocess runs without node_modules", async () => {
+	const workDir = await mkdtemp(join(tmpdir(), "pi-provenance-check-"));
+	try {
+		await cp(
+			join(packageRoot, "scripts/verify-provenance.mjs"),
+			join(workDir, "verify-provenance.mjs"),
+		);
+		const auditPath = join(workDir, "audit.json");
+		await writeFile(
+			auditPath,
+			JSON.stringify({ invalid: [], verified: [], missing: [{ name: "pi-session-only-model" }] }),
+			"utf8",
+		);
+		const { stdout } = await execFileAsync(
+			process.execPath,
+			[
+				join(workDir, "verify-provenance.mjs"),
+				auditPath,
+				"pi-session-only-model",
+				"0.0.0",
+				"a".repeat(40),
+			],
+			{ cwd: workDir, env: { ...process.env, NODE_OPTIONS: undefined } },
+		);
+		const evidence = JSON.parse(stdout);
+		assert.equal(evidence.provenancePredicateTypes.length, 0);
+	} finally {
+		await rm(workDir, { recursive: true, force: true });
+	}
 });
 
 test("packed tarball contains only allowlisted runtime and documentation files", async () => {

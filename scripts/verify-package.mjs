@@ -12,6 +12,9 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { validateProvenanceAudit } from "./verify-provenance.mjs";
+
+export { validateProvenanceAudit };
 
 const execFileAsync = promisify(execFile);
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -60,95 +63,6 @@ export function assertPackFileList(actualFiles, allowedPaths) {
 			throw new Error(`missing required pack file: ${required}`);
 		}
 	}
-}
-
-/**
- * @param {unknown} audit
- * @param {string} packageName
- * @param {string} version
- * @param {string} expectedCommit
- */
-export function validateProvenanceAudit(audit, packageName, version, expectedCommit) {
-	if (!audit || typeof audit !== "object") {
-		throw new Error("npm audit signatures output must be an object");
-	}
-	const record = /** @type {{ invalid?: unknown[]; missing?: unknown[]; verified?: Array<{ name?: string; attestationBundles?: unknown[] }> }} */ (
-		audit
-	);
-	if ((record.invalid ?? []).length > 0) {
-		throw new Error(`invalid registry signatures: ${JSON.stringify(record.invalid)}`);
-	}
-
-	const target = (record.verified ?? []).find((entry) => entry.name === packageName);
-	const provenanceEvidence = {
-		package: packageName,
-		version,
-		verifiedTargetFound: Boolean(target),
-		invalid: record.invalid ?? [],
-		missing: record.missing ?? [],
-		provenancePredicateTypes: /** @type {string[]} */ ([]),
-		sourceRepository: null,
-		sourceCommit: null,
-	};
-
-	if (target?.attestationBundles?.length) {
-		for (const bundle of target.attestationBundles) {
-			const attestation = /** @type {{ predicateType?: string; bundle?: { dsseEnvelope?: { payload?: string } } } } */ (
-				bundle
-			);
-			if (attestation.predicateType) {
-				provenanceEvidence.provenancePredicateTypes.push(attestation.predicateType);
-			}
-			const payload = attestation.bundle?.dsseEnvelope?.payload;
-			if (!payload) continue;
-			const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-			const predicate = decoded.predicate ?? decoded;
-			const sourceUri =
-				predicate?.invocation?.configSource?.uri ??
-				predicate?.buildDefinition?.externalParameters?.repository ??
-				predicate?.repository?.url ??
-				null;
-			const sourceCommit =
-				predicate?.invocation?.configSource?.digest?.gitCommit ??
-				predicate?.buildDefinition?.externalParameters?.sha ??
-				predicate?.source?.commit?.sha ??
-				null;
-			if (sourceUri) provenanceEvidence.sourceRepository = sourceUri;
-			if (sourceCommit) provenanceEvidence.sourceCommit = sourceCommit;
-		}
-	}
-
-	const hasProvenance = provenanceEvidence.provenancePredicateTypes.length > 0;
-	const canonicalRepo = "wh3at/pi-session-only-model";
-
-	if (version === "0.0.0") {
-		if (!hasProvenance) {
-			return provenanceEvidence;
-		}
-	} else {
-		if ((record.missing ?? []).length > 0) {
-			throw new Error(`missing registry signatures: ${JSON.stringify(record.missing)}`);
-		}
-		if (!hasProvenance) {
-			throw new Error(
-				`missing provenance attestations for ${packageName}@${version}; OIDC releases must carry provenance`,
-			);
-		}
-	}
-
-	if (hasProvenance) {
-		const repoText = String(provenanceEvidence.sourceRepository ?? "");
-		if (!repoText.includes(canonicalRepo)) {
-			throw new Error(`provenance repository mismatch: ${repoText}`);
-		}
-		if (provenanceEvidence.sourceCommit !== expectedCommit) {
-			throw new Error(
-				`provenance commit mismatch: expected ${expectedCommit}, received ${provenanceEvidence.sourceCommit}`,
-			);
-		}
-	}
-
-	return provenanceEvidence;
 }
 
 /**
