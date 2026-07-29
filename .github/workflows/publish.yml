@@ -49,6 +49,11 @@ jobs:
             exit 1
           fi
 
+          if ! echo "$publish_job" | grep -Fq 'npm publish "./release-artifact/${filename}" --access public'; then
+            echo "publish job must use an explicit local tarball path"
+            exit 1
+          fi
+
           if echo "$publish_job" | grep -Eq 'actions/checkout@|npm ci|npm run'; then
             echo "publish job must not checkout source, install repository dependencies, or run repository scripts"
             exit 1
@@ -235,4 +240,4 @@ jobs:
           set -euo pipefail
           filename="$(node -p "JSON.parse(require('node:fs').readFileSync('release-artifact/metadata.json','utf8')).filename")"
           npm --version
-          npm publish "release-artifact/${filename}" --access public
+          npm publish "./release-artifact/${filename}" --access public

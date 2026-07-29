@@ -12,7 +12,7 @@ const execFileAsync = promisify(execFile);
  */
 export function classifyNpmViewFailure(stderr, stdout, message) {
 	const combined = `${stderr}\n${stdout}\n${message}`;
-	if (/\bE404\b/.test(combined) || /404 Not Found/i.test(combined) || /Not found/i.test(combined)) {
+	if (/\bE404\b/.test(combined) || /404 Not Found/i.test(combined)) {
 		return "not-found";
 	}
 	if (/EEXIST|already exists/i.test(combined)) {

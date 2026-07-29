@@ -25,6 +25,10 @@ test("classifyNpmViewFailure distinguishes verified 404 from other lookup failur
 		classifyNpmViewFailure("npm ERR! code E401", "Unauthorized", ""),
 		"error",
 	);
+	assert.equal(
+		classifyNpmViewFailure("npm ERR! code E401", "authentication token not found", ""),
+		"error",
+	);
 });
 
 async function makeIsolatedRegistryCheckFixture() {
