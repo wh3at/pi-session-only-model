@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+
+- Publish the validated tarball through an explicit `./release-artifact/` path so npm treats it as a local file.
+- Supersede the unpublished `v0.1.2` attempt, which stopped before npm publication when npm interpreted the path as a GitHub shorthand.
+
 ## 0.1.2
 
 - Move pre-install npm registry absence checks into `scripts/check-registry-version.mjs` so release eligibility can run before `npm ci`.
