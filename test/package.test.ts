@@ -161,6 +161,50 @@ test("validateProvenanceAudit requires provenance and rejects missing for OIDC r
 	);
 });
 
+test("validateProvenanceAudit reads npm GitHub Actions SLSA v1 fields", () => {
+	const commit = "f194f0829bf29cea7f1471a5de56ba156884c468";
+	const payload = Buffer.from(
+		JSON.stringify({
+			predicate: {
+				buildDefinition: {
+					externalParameters: {
+						workflow: { repository: "https://github.com/wh3at/pi-session-only-model" },
+					},
+					resolvedDependencies: [
+						{
+							uri: "git+https://github.com/wh3at/pi-session-only-model@refs/tags/v0.1.3",
+							digest: { gitCommit: commit },
+						},
+					],
+				},
+			},
+		}),
+		"utf8",
+	).toString("base64url");
+	const evidence = validateProvenanceAudit(
+		{
+			invalid: [],
+			missing: [],
+			verified: [
+				{
+					name: "pi-session-only-model",
+					attestationBundles: [
+						{
+							predicateType: "https://slsa.dev/provenance/v1",
+							bundle: { dsseEnvelope: { payload } },
+						},
+					],
+				},
+			],
+		},
+		"pi-session-only-model",
+		"0.1.3",
+		commit,
+	);
+	assert.equal(evidence.sourceRepository, "https://github.com/wh3at/pi-session-only-model");
+	assert.equal(evidence.sourceCommit, commit);
+});
+
 test("normalizeRepositoryReference accepts known git URL forms and rejects lookalikes", () => {
 	const canonical = "wh3at/pi-session-only-model";
 	assert.equal(
