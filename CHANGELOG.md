@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Move pre-install npm registry absence checks into `scripts/check-registry-version.mjs` so release eligibility can run before `npm ci`.
+- Supersede the unpublished `v0.1.1` attempt, which stopped before OIDC because `verify-package.mjs` required Pi dependencies during module resolution.
+
 ## 0.1.1
 
 - Correct the pinned artifact upload and download Action commits used by the OIDC release path.

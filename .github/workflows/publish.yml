@@ -75,7 +75,7 @@ jobs:
             exit 1
           fi
 
-          if ! grep -Fq 'assertRegistryVersionAbsent' "$workflow"; then
+          if ! grep -Fq 'scripts/check-registry-version.mjs' "$workflow"; then
             echo "validate job must distinguish verified npm 404 from other registry lookup failures"
             exit 1
           fi
@@ -127,15 +127,7 @@ jobs:
             exit 1
           fi
 
-          export PACKAGE_VERSION="$package_version"
-          node --experimental-strip-types <<'NODE'
-          import { assertRegistryVersionAbsent } from "./scripts/verify-package.mjs";
-
-          await assertRegistryVersionAbsent("pi-session-only-model", process.env.PACKAGE_VERSION);
-          console.log(
-            `registry version not found (expected): pi-session-only-model@${process.env.PACKAGE_VERSION}`,
-          );
-          NODE
+          node scripts/check-registry-version.mjs pi-session-only-model "$package_version"
 
           echo "release eligibility checks passed for ${TAG_NAME}"
 
