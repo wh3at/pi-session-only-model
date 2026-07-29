@@ -9,6 +9,25 @@
     "pi-extension",
     "pi-coding-agent"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wh3at/pi-session-only-model.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wh3at/pi-session-only-model/issues"
+  },
+  "homepage": "https://github.com/wh3at/pi-session-only-model#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "index.ts",
+    "guard.ts",
+    "command.ts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "pi": {
     "extensions": [
       "./index.ts"
@@ -20,6 +39,9 @@
   },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.80.10",
