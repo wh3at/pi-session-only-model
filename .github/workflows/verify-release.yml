@@ -55,7 +55,7 @@ jobs:
             exit 1
           fi
 
-          if grep -Eq '\$\{\{[[:space:]]*secrets\.|NODE_AUTH_TOKEN|NPM_TOKEN[[:space:]]*=' "$workflow"; then
+          if grep -Eq '\$\{\{[[:space:]]*secrets\.|NODE[_]AUTH_TOKEN|NPM[_]TOKEN[[:space:]]*=' "$workflow"; then
             echo "secrets and NPM_TOKEN are forbidden in verify-release workflow"
             exit 1
           fi
