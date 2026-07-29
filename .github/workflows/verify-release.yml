@@ -532,7 +532,7 @@ jobs:
 
       - name: Upload verification evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75dc225b5c5cd846dc2ae7f4873 # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verify-release-evidence-${{ inputs.version }}
           path: verification-evidence/

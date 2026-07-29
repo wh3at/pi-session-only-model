@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Correct the pinned artifact upload and download Action commits used by the OIDC release path.
+- Supersede the unpublished `v0.1.0` attempt, which stopped before validation or npm authentication.
+
 ## 0.1.0
 
 - Add `/session-only-model <provider>/<model-id>` without changing Pi's existing `/model` behavior.
