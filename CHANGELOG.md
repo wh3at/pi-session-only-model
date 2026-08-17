@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0
+
 - Replace manual provider/model and thinking arguments with a searchable, TUI-only two-stage picker.
 - Require an explicit thinking-level selection and apply the confirmed model/thinking pair only to the current session.
 - Keep `reset` for restoring the session-start model and thinking level without changing Pi defaults.
