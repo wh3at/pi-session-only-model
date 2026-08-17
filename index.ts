@@ -128,7 +128,9 @@ async function setSessionModel(
 					`No authentication is available for ${formatModel({ provider: selection.model.provider, id: selection.model.id })}`,
 				);
 			}
-			pi.setThinkingLevel(selection.thinkingLevel as PiThinkingLevel);
+			if (selection.thinkingLevel !== "off") {
+				pi.setThinkingLevel(selection.thinkingLevel);
+			}
 		});
 	} catch (error) {
 		ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");

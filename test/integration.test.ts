@@ -98,10 +98,12 @@ test("picker applies one confirmed model/thinking pair while a normal model chan
 			sessionManager,
 			noTools: "all",
 		}));
-		const ui = tuiUI(["m2", "\r", "\r"]);
+		assert.equal(session.thinkingLevel, "medium");
+		const ui = tuiUI(["m2", "\r", "\u001b[B", "\r"]);
 		await runCommand(session, "", ui);
 		await settingsManager.flush();
 		assert.equal(session.model?.id, "m2");
+		assert.equal(session.thinkingLevel, "minimal");
 		assert.equal(ui.customCalls(), 1);
 		assert.deepEqual(JSON.parse(await readFile(join(fixture.agentDir, "settings.json"), "utf8")), {
 			defaultProvider: "test",
@@ -109,13 +111,50 @@ test("picker applies one confirmed model/thinking pair while a normal model chan
 			defaultThinkingLevel: "medium",
 		});
 		assert.equal(sessionManager.getEntries().some((entry) => entry.type === "model_change" && entry.modelId === "m2"), false);
-		assert.equal(sessionManager.getEntries().some((entry) => entry.type === "thinking_level_change" && entry.thinkingLevel === "off"), false);
+		assert.equal(sessionManager.getEntries().some((entry) => entry.type === "thinking_level_change" && entry.thinkingLevel === "minimal"), false);
 
 		await session.setModel(fixture.modelRuntime.getModel("test", "m3")!);
 		await settingsManager.flush();
 		assert.equal(session.model?.id, "m3");
 		assert.equal(sessionManager.getEntries().some((entry) => entry.type === "model_change" && entry.modelId === "m3"), true);
 		assert.equal(JSON.parse(await readFile(join(fixture.agentDir, "settings.json"), "utf8")).defaultModel, "m3");
+	} finally {
+		await fixture.cleanup(session);
+	}
+});
+
+test("picker applies off for a non-reasoning model through setModel normalization", async () => {
+	const fixture = await makeFixture({ repoRoot: packageRoot });
+	let session: AgentSession | undefined;
+	try {
+		fixture.modelRuntime.registerProvider("no-reasoning", {
+			baseUrl: "https://example.invalid/v1",
+			apiKey: "dummy",
+			api: "openai-completions",
+			models: [{
+				id: "m-off",
+				name: "m-off",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 10_000,
+				maxTokens: 1_000,
+			}],
+		});
+		const settingsManager = SettingsManager.create(fixture.cwd, fixture.agentDir);
+		const sessionManager = SessionManager.inMemory(fixture.cwd);
+		({ session } = await createAgentSession({
+			cwd: fixture.cwd,
+			agentDir: fixture.agentDir,
+			modelRuntime: fixture.modelRuntime,
+			settingsManager,
+			sessionManager,
+			noTools: "all",
+		}));
+		assert.equal(session.thinkingLevel, "medium");
+		await runCommand(session, "", tuiUI(["no-reasoning/m-off", "\r", "\r"]));
+		assert.equal(session.model?.id, "m-off");
+		assert.equal(session.thinkingLevel, "off");
 	} finally {
 		await fixture.cleanup(session);
 	}
