@@ -1,6 +1,3 @@
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-export type SessionThinkingLevel = (typeof THINKING_LEVELS)[number];
-
 export interface ModelReference {
 	provider: string;
 	id: string;
