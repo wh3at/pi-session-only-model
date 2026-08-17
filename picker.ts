@@ -30,7 +30,7 @@ export interface SessionModelPickerContext {
 	modelRegistry: {
 		getAvailable(): Model<Api>[];
 	};
-	ui: Pick<ExtensionUIContext, "custom">;
+	ui: Pick<ExtensionUIContext, "custom" | "notify">;
 }
 
 const SELECT_LIST_THEME = {
@@ -181,9 +181,12 @@ class SessionModelPickerComponent extends Container implements Focusable {
 export async function pickSessionModel(
 	ctx: SessionModelPickerContext,
 ): Promise<SessionModelSelection | undefined> {
-	const models = getPickerModels(ctx.scopedModels, ctx.modelRegistry.getAvailable());
-	const items = getModelPickerItems(models);
-	if (items.length === 0) return undefined;
+	const availableModels = ctx.scopedModels.length > 0 ? [] : ctx.modelRegistry.getAvailable();
+	const items = getModelPickerItems(getPickerModels(ctx.scopedModels, availableModels));
+	if (items.length === 0) {
+		ctx.ui.notify("No models are available for this session.", "warning");
+		return undefined;
+	}
 
 	return ctx.ui.custom((_, _theme, _keybindings, done) => new SessionModelPickerComponent(items, done));
 }

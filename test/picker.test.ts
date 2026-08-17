@@ -35,12 +35,20 @@ function makeModel(
 
 function pickerContext(
 	scopedModels: readonly Model<any>[], availableModels: readonly Model<any>[], inputs: string[],
-): SessionModelPickerContext & { customCalls: () => number } {
+): SessionModelPickerContext & { customCalls: () => number; availableCalls: () => number; notifications: string[] } {
 	let customCalls = 0;
+	let availableCalls = 0;
+	const notifications: string[] = [];
 	return {
 		scopedModels: scopedModels.map((model) => ({ model })),
-		modelRegistry: { getAvailable: () => [...availableModels] },
+		modelRegistry: {
+			getAvailable: () => {
+				availableCalls++;
+				return [...availableModels];
+			},
+		},
 		ui: {
+			notify: (message: string) => notifications.push(message),
 			custom: (async (factory: any) => {
 				customCalls++;
 				let result: SessionModelSelection | undefined;
@@ -52,6 +60,8 @@ function pickerContext(
 			}) as SessionModelPickerContext["ui"]["custom"],
 		},
 		customCalls: () => customCalls,
+		availableCalls: () => availableCalls,
+		notifications,
 	};
 }
 
@@ -100,10 +110,18 @@ test("thinking items use only levels supported by the selected model", () => {
 	assert.deepEqual(getThinkingPickerItems(makeModel("test", "plain", "Plain", false)).map((item) => item.value), ["off"]);
 });
 
-test("empty candidates do not open UI", async () => {
+test("empty candidates notify without opening UI", async () => {
 	const context = pickerContext([], [], []);
 	assert.equal(await pickSessionModel(context), undefined);
 	assert.equal(context.customCalls(), 0);
+	assert.equal(context.notifications.some((message) => message.includes("No models")), true);
+});
+
+test("scoped candidates do not load the available catalog", async () => {
+	const scoped = makeModel("scoped", "model", "Scoped");
+	const context = pickerContext([scoped], [], ["\r", "\r"]);
+	assert.deepEqual(await pickSessionModel(context), { model: scoped, thinkingLevel: "off" });
+	assert.equal(context.availableCalls(), 0);
 });
 
 test("picker returns a model and explicitly selected thinking level", async () => {
