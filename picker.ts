@@ -71,11 +71,13 @@ export function filterModelPickerItems(items: readonly ModelPickerItem[], query:
 }
 
 export function getThinkingPickerItems(model: Model<Api>): ThinkingPickerItem[] {
-	return getSupportedThinkingLevels(model).map((thinkingLevel) => ({
-		thinkingLevel,
-		value: thinkingLevel,
-		label: thinkingLevel,
-	}));
+	return getSupportedThinkingLevels(model)
+		.filter((thinkingLevel) => !model.reasoning || thinkingLevel !== "off")
+		.map((thinkingLevel) => ({
+			thinkingLevel,
+			value: thinkingLevel,
+			label: thinkingLevel,
+		}));
 }
 
 class SessionModelPickerComponent extends Container implements Focusable {

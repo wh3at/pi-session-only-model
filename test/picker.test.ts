@@ -93,7 +93,7 @@ test("provider-qualified IDs disambiguate identical model IDs", () => {
 	assert.deepEqual(filterModelPickerItems(items, "beta").map((item) => item.value), ["beta/same"]);
 });
 
-test("thinking items use only levels supported by the selected model", () => {
+test("thinking items use only levels the picker can apply", () => {
 	const model = makeModel("test", "restricted", "Restricted", true, {
 		off: null,
 		minimal: "minimal",
@@ -106,6 +106,10 @@ test("thinking items use only levels supported by the selected model", () => {
 	assert.deepEqual(
 		getThinkingPickerItems(model).map((item) => item.value),
 		["minimal", "medium", "high"],
+	);
+	assert.deepEqual(
+		getThinkingPickerItems(makeModel("test", "reasoning", "Reasoning")).map((item) => item.value),
+		["minimal", "low", "medium", "high", "xhigh", "max"],
 	);
 	assert.deepEqual(getThinkingPickerItems(makeModel("test", "plain", "Plain", false)).map((item) => item.value), ["off"]);
 });
@@ -120,13 +124,13 @@ test("empty candidates notify without opening UI", async () => {
 test("scoped candidates do not load the available catalog", async () => {
 	const scoped = makeModel("scoped", "model", "Scoped");
 	const context = pickerContext([scoped], [], ["\r", "\r"]);
-	assert.deepEqual(await pickSessionModel(context), { model: scoped, thinkingLevel: "off" });
+	assert.deepEqual(await pickSessionModel(context), { model: scoped, thinkingLevel: "minimal" });
 	assert.equal(context.availableCalls(), 0);
 });
 
 test("picker returns a model and explicitly selected thinking level", async () => {
 	const model = makeModel("test", "m1", "Model One");
-	const context = pickerContext([], [model], ["\r", "\u001b[B", "\r"]);
+	const context = pickerContext([], [model], ["\r", "\r"]);
 	assert.deepEqual(await pickSessionModel(context), { model, thinkingLevel: "minimal" satisfies ModelThinkingLevel });
 });
 
@@ -134,7 +138,7 @@ test("search input filters the interactive model stage before confirmation", asy
 	const alpha = makeModel("test", "alpha", "Alpha");
 	const beta = makeModel("other", "beta", "Beta");
 	const context = pickerContext([], [alpha, beta], ["beta", "\r", "\r"]);
-	assert.deepEqual(await pickSessionModel(context), { model: beta, thinkingLevel: "off" });
+	assert.deepEqual(await pickSessionModel(context), { model: beta, thinkingLevel: "minimal" });
 });
 
 test("cancelling model selection returns no result", async () => {

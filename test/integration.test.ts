@@ -99,7 +99,7 @@ test("picker applies one confirmed model/thinking pair while a normal model chan
 			noTools: "all",
 		}));
 		assert.equal(session.thinkingLevel, "medium");
-		const ui = tuiUI(["m2", "\r", "\u001b[B", "\r"]);
+		const ui = tuiUI(["m2", "\r", "\r"]);
 		await runCommand(session, "", ui);
 		await settingsManager.flush();
 		assert.equal(session.model?.id, "m2");
