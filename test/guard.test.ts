@@ -60,8 +60,8 @@ function acquire(
 	return acquireGuard(
 		{ SettingsManager, SessionManager },
 		{
-			version: "0.80.10",
-			minimumVersion: "0.80.10",
+			version: "0.83.0",
+			minimumVersion: "0.83.0",
 			stateHost: host,
 			stateKey: Symbol("test-state"),
 		},
@@ -69,10 +69,10 @@ function acquire(
 }
 
 test("version support is minimum-inclusive with no upper bound", () => {
-	assert.equal(isVersionSupported("0.80.10", "0.80.10"), true);
-	assert.equal(isVersionSupported("0.80.99-dev.1", "0.80.10"), true);
-	assert.equal(isVersionSupported("0.82.1", "0.80.10"), true);
-	assert.equal(isVersionSupported("0.80.9", "0.80.10"), false);
+	assert.equal(isVersionSupported("0.83.0", "0.83.0"), true);
+	assert.equal(isVersionSupported("0.83.0-dev.1", "0.83.0"), true);
+	assert.equal(isVersionSupported("0.84.0", "0.83.0"), true);
+	assert.equal(isVersionSupported("0.82.9", "0.83.0"), false);
 });
 
 test("normal writes remain unchanged outside /session-only-model", () => {
@@ -178,8 +178,8 @@ test("unsupported Pi versions disable only this command guard", () => {
 	const lease = acquireGuard(
 		{ SettingsManager: FakeSettingsManager, SessionManager: FakeSessionManager },
 		{
-			version: "0.80.9",
-			minimumVersion: "0.80.10",
+			version: "0.82.9",
+			minimumVersion: "0.83.0",
 			stateHost: {},
 			stateKey: Symbol("unsupported"),
 		},

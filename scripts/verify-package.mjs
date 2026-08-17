@@ -138,6 +138,12 @@ export async function typecheckExtractedPackage(extractedDir, typesRoot) {
 						"@earendil-works/pi-coding-agent": [
 							"node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts",
 						],
+						"@earendil-works/pi-ai": [
+							"node_modules/@earendil-works/pi-ai/dist/index.d.ts",
+						],
+						"@earendil-works/pi-tui": [
+							"node_modules/@earendil-works/pi-tui/dist/index.d.ts",
+						],
 					},
 				},
 				include: ["*.ts"],
@@ -181,7 +187,7 @@ export async function makeFixture(options = {}) {
 	if (options.extensionSourceDir) {
 		await installExtensionSources(extensionDir, sourceDir);
 	} else {
-		for (const file of ["index.ts", "guard.ts", "command.ts"]) {
+		for (const file of ["index.ts", "guard.ts", "command.ts", "picker.ts"]) {
 			await cp(join(sourceDir, file), join(extensionDir, file));
 		}
 	}
@@ -226,6 +232,20 @@ export async function makeFixture(options = {}) {
 	};
 }
 
+function pickerUI(inputs) {
+	return {
+		notify() {},
+		custom: async (factory) => {
+			let result;
+			const component = await factory({}, {}, {}, (value) => {
+				result = value;
+			});
+			for (const input of inputs) component.handleInput(input);
+			return result;
+		},
+	};
+}
+
 /**
  * @param {string} extensionSourceDir
  * @param {string} [repoRoot]
@@ -244,9 +264,11 @@ export async function smokeExtensionFromExtracted(extensionSourceDir, repoRoot =
 			sessionManager,
 			noTools: "all",
 		}));
-		await session.bindExtensions({ mode: "print" });
+		await session.bindExtensions({ mode: "tui", uiContext: pickerUI(["m2", "\r", "\r"]) });
 		assert.equal(session.model?.id, "m1", "expected default model before session-only-model");
-		await session.prompt("/session-only-model test/m2");
+		const command = session.extensionRunner.getCommand("session-only-model");
+		assert.ok(command);
+		await command.handler("", session.extensionRunner.createCommandContext());
 		assert.equal(
 			session.model?.id,
 			"m2",

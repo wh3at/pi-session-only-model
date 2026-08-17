@@ -112,7 +112,7 @@ jobs:
       matrix:
         include:
           - label: minimum
-            pi_version: "0.80.10"
+            pi_version: "0.83.0"
           - label: current
             pi_version: current
     steps:

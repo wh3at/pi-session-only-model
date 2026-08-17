@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Replace manual provider/model and thinking arguments with a searchable, TUI-only two-stage picker.
+- Require an explicit thinking-level selection and apply the confirmed model/thinking pair only to the current session.
+- Keep `reset` for restoring the session-start model and thinking level without changing Pi defaults.
+- Raise the supported Pi version to `0.83.0` and package the picker runtime and TUI peer dependency.
+
 ## 0.1.3
 
 - Publish the validated tarball through an explicit `./release-artifact/` path so npm treats it as a local file.
