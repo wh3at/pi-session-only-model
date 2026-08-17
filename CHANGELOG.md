@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Replace manual provider/model and thinking arguments with a searchable, TUI-only two-stage picker.
+- Require an explicit thinking-level selection and apply the confirmed model/thinking pair only to the current session.
+- Keep `reset` for restoring the session-start model and thinking level without changing Pi defaults.
+- Raise the supported Pi version to `0.83.0` and package the picker runtime and TUI peer dependency.
+
 ## 0.1.3
 
 - Publish the validated tarball through an explicit `./release-artifact/` path so npm treats it as a local file.
@@ -17,9 +24,7 @@
 
 ## 0.1.0
 
-- Add `/session-only-model <provider>/<model-id>` without changing Pi's existing `/model` behavior.
-- Support model IDs containing `/` and `:` such as `openrouter/tencent/hy3:free`.
-- Add optional session-only thinking selection through `--thinking`.
+- Add a session-only model picker without changing Pi's existing `/model` behavior.
 - Restore the configured default model on the next startup or session.
 - Publish through the secure npm release path: read-only contribution CI, digest-identified tarball verification, and OIDC Trusted Publishing from protected `main`.
 - Install with `pi install npm:pi-session-only-model`.

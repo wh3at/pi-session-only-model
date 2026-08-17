@@ -385,7 +385,7 @@ test("missing runtime files fail verification", async () => {
 		await copyFile(join(packageRoot, file), join(fixtureRoot, file));
 	}
 	const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
-	manifest.files = ["index.ts", "guard.ts", "command.ts", "README.md", "CHANGELOG.md", "LICENSE"];
+	manifest.files = ["index.ts", "guard.ts", "command.ts", "picker.ts", "README.md", "CHANGELOG.md", "LICENSE"];
 	await writeFile(join(fixtureRoot, "package.json"), JSON.stringify(manifest, null, 2), "utf8");
 
 	try {

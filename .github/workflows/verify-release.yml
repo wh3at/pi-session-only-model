@@ -390,7 +390,7 @@ jobs:
           mkdir -p "$VERIFIER_DIR"
           cd "$VERIFIER_DIR"
           npm init -y >/dev/null 2>&1
-          npm install @earendil-works/pi-coding-agent@0.80.10 --ignore-scripts --no-save >/dev/null 2>&1
+          npm install @earendil-works/pi-coding-agent@0.83.0 --ignore-scripts --no-save >/dev/null 2>&1
           PI_BIN="${VERIFIER_DIR}/node_modules/.bin/pi"
 
           "$PI_BIN" install "npm:${PACKAGE_NAME}@${INPUT_VERSION}"

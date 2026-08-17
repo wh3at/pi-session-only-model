@@ -8,8 +8,11 @@ import {
 import {
 	parseSessionModelCommand,
 	type ModelReference,
-	type SessionThinkingLevel,
 } from "./command.ts";
+import {
+	pickSessionModel,
+	type SessionModelSelection,
+} from "./picker.ts";
 import {
 	acquireGuard,
 	readLatestRestorePolicy,
@@ -89,6 +92,7 @@ function appendRestorePolicy(pi: ExtensionAPI, suppressRestore: boolean, source:
 		source,
 	});
 }
+
 function resolveModel(ctx: ExtensionContext, reference: ModelReference) {
 	const direct = ctx.modelRegistry.find(reference.provider, reference.id);
 	if (direct) return direct;
@@ -99,14 +103,12 @@ function resolveModel(ctx: ExtensionContext, reference: ModelReference) {
 		.find((model) => model.provider.toLowerCase() === provider && model.id.toLowerCase() === id);
 }
 
-
 async function setSessionModel(
 	state: RuntimeState,
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	lease: ReturnType<typeof acquireGuard>,
-	modelReference: ModelReference | undefined,
-	thinkingLevel: SessionThinkingLevel | undefined,
+	selection: SessionModelSelection,
 ): Promise<void> {
 	if (!ctx.isIdle()) {
 		ctx.ui.notify("Stop the current response before changing the session model.", "warning");
@@ -119,19 +121,14 @@ async function setSessionModel(
 		thinkingLevel: pi.getThinkingLevel(),
 	};
 
-	const model = modelReference ? resolveModel(ctx, modelReference) : undefined;
-	if (modelReference && !model) {
-		ctx.ui.notify(`Model not found: ${formatModel(modelReference)}`, "error");
-		return;
-	}
-
 	try {
 		await lease.runSessionOnly(async () => {
-			if (model) {
-				const changed = await pi.setModel(model);
-				if (!changed) throw new Error(`No authentication is available for ${formatModel(modelReference)}`);
+			if (!(await pi.setModel(selection.model))) {
+				throw new Error(
+					`No authentication is available for ${formatModel({ provider: selection.model.provider, id: selection.model.id })}`,
+				);
 			}
-			if (thinkingLevel) pi.setThinkingLevel(thinkingLevel as PiThinkingLevel);
+			pi.setThinkingLevel(selection.thinkingLevel as PiThinkingLevel);
 		});
 	} catch (error) {
 		ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
@@ -142,7 +139,7 @@ async function setSessionModel(
 	state.restoreSuppressionSessionId = sessionId(ctx);
 	appendRestorePolicy(pi, true, "session-only-model");
 	ctx.ui.notify(
-		`Session model is now ${formatModel(currentModel(ctx) ?? modelReference)} · thinking=${pi.getThinkingLevel()}. ` +
+		`Session model is now ${formatModel(currentModel(ctx) ?? { provider: selection.model.provider, id: selection.model.id })} · thinking=${pi.getThinkingLevel()}. ` +
 			"settings.json and normal /model behavior were left unchanged.",
 		"info",
 	);
@@ -273,7 +270,19 @@ export default function sessionOnlyModel(pi: ExtensionAPI): void {
 			}
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("Model picker is only available in TUI mode.", "warning");
+				return;
 			}
+			if (!ctx.isIdle()) {
+				ctx.ui.notify("Stop the current response before changing the session model.", "warning");
+				return;
+			}
+			const selection = await pickSessionModel({
+				scopedModels: ctx.scopedModels,
+				modelRegistry: ctx.modelRegistry,
+				ui: ctx.ui,
+			});
+			if (!selection) return;
+			await setSessionModel(state, pi, ctx, lease, selection);
 		},
 	});
 }

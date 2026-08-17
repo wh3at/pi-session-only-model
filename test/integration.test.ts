@@ -15,6 +15,55 @@ import { makeFixture, smokeExtensionFromExtracted, verifyPackage } from "../scri
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
+type Component = { handleInput?: (data: string) => void };
+
+function tuiUI(
+	initialInputs: string[],
+	notifications: string[] = [],
+	afterSelection?: () => void,
+) {
+	let inputs = initialInputs;
+	let customCalls = 0;
+	const ui = {
+		select: async () => undefined,
+		confirm: async () => false,
+		input: async () => undefined,
+		notify: (message: string) => notifications.push(message),
+		onTerminalInput: () => () => undefined,
+		setStatus: () => undefined,
+		setWorkingMessage: () => undefined,
+		setWorkingVisible: () => undefined,
+		setWorkingIndicator: () => undefined,
+		setHiddenThinkingLabel: () => undefined,
+		setWidget: () => undefined,
+		setFooter: () => undefined,
+		setHeader: () => undefined,
+		setTitle: () => undefined,
+		custom: async (factory: any) => {
+			customCalls++;
+			let result: unknown;
+			const component = (await factory({}, {}, {}, (value: unknown) => {
+				result = value;
+			})) as Component;
+			for (const input of inputs) component.handleInput?.(input);
+			if (result !== undefined) afterSelection?.();
+			return result;
+		},
+	};
+	return {
+		uiContext: ui as any,
+		customCalls: () => customCalls,
+		setInputs: (nextInputs: string[]) => { inputs = nextInputs; },
+	};
+}
+
+async function runCommand(session: AgentSession, args: string, ui?: ReturnType<typeof tuiUI>) {
+	if (ui) await session.bindExtensions({ mode: "tui", uiContext: ui.uiContext });
+	const command = session.extensionRunner.getCommand("session-only-model");
+	assert.ok(command);
+	await command.handler(args, session.extensionRunner.createCommandContext());
+}
+
 function temporaryAssistant(): AssistantMessage {
 	return {
 		role: "assistant",
@@ -35,7 +84,7 @@ function temporaryAssistant(): AssistantMessage {
 	};
 }
 
-test("/session-only-model is ephemeral while a normal model change remains persistent", async () => {
+test("picker applies one confirmed model/thinking pair while a normal model change remains persistent", async () => {
 	const fixture = await makeFixture({ repoRoot: packageRoot });
 	let session: AgentSession | undefined;
 	try {
@@ -49,37 +98,119 @@ test("/session-only-model is ephemeral while a normal model change remains persi
 			sessionManager,
 			noTools: "all",
 		}));
-		await session.bindExtensions({ mode: "print" });
-
-		await session.prompt("/session-only-model test/m2 --thinking high");
+		const ui = tuiUI(["m2", "\r", "\r"]);
+		await runCommand(session, "", ui);
 		await settingsManager.flush();
 		assert.equal(session.model?.id, "m2");
-		assert.equal(session.thinkingLevel, "high");
+		assert.equal(ui.customCalls(), 1);
 		assert.deepEqual(JSON.parse(await readFile(join(fixture.agentDir, "settings.json"), "utf8")), {
 			defaultProvider: "test",
 			defaultModel: "m1",
 			defaultThinkingLevel: "medium",
 		});
-		assert.equal(
-			sessionManager.getEntries().some((entry) => entry.type === "model_change" && entry.modelId === "m2"),
-			false,
-		);
-		assert.equal(
-			sessionManager.getEntries().some((entry) => entry.type === "thinking_level_change" && entry.thinkingLevel === "high"),
-			false,
-		);
+		assert.equal(sessionManager.getEntries().some((entry) => entry.type === "model_change" && entry.modelId === "m2"), false);
+		assert.equal(sessionManager.getEntries().some((entry) => entry.type === "thinking_level_change" && entry.thinkingLevel === "off"), false);
 
 		await session.setModel(fixture.modelRuntime.getModel("test", "m3")!);
 		await settingsManager.flush();
 		assert.equal(session.model?.id, "m3");
-		assert.equal(
-			sessionManager.getEntries().some((entry) => entry.type === "model_change" && entry.modelId === "m3"),
-			true,
-		);
-		assert.equal(
-			JSON.parse(await readFile(join(fixture.agentDir, "settings.json"), "utf8")).defaultModel,
-			"m3",
-		);
+		assert.equal(sessionManager.getEntries().some((entry) => entry.type === "model_change" && entry.modelId === "m3"), true);
+		assert.equal(JSON.parse(await readFile(join(fixture.agentDir, "settings.json"), "utf8")).defaultModel, "m3");
+	} finally {
+		await fixture.cleanup(session);
+	}
+});
+
+test("cancelling either picker stage leaves the current session unchanged", async () => {
+	const fixture = await makeFixture({ repoRoot: packageRoot });
+	let session: AgentSession | undefined;
+	try {
+		const settingsManager = SettingsManager.create(fixture.cwd, fixture.agentDir);
+		const sessionManager = SessionManager.inMemory(fixture.cwd);
+		({ session } = await createAgentSession({
+			cwd: fixture.cwd,
+			agentDir: fixture.agentDir,
+			modelRuntime: fixture.modelRuntime,
+			settingsManager,
+			sessionManager,
+			noTools: "all",
+		}));
+		const ui = tuiUI(["\u001b"]);
+		await runCommand(session, "", ui);
+		assert.equal(session.model?.id, "m1");
+		assert.equal(session.thinkingLevel, "medium");
+		ui.setInputs(["\r", "\u001b"]);
+		await runCommand(session, "");
+		assert.equal(session.model?.id, "m1");
+		assert.equal(session.thinkingLevel, "medium");
+		assert.equal(sessionManager.getEntries().some((entry) => entry.type === "model_change" && entry.modelId === "m2"), false);
+	} finally {
+		await fixture.cleanup(session);
+	}
+});
+
+test("non-TUI and unsupported input report without changing session state", async () => {
+	const fixture = await makeFixture({ repoRoot: packageRoot });
+	let session: AgentSession | undefined;
+	try {
+		const settingsManager = SettingsManager.create(fixture.cwd, fixture.agentDir);
+		const sessionManager = SessionManager.inMemory(fixture.cwd);
+		({ session } = await createAgentSession({
+			cwd: fixture.cwd,
+			agentDir: fixture.agentDir,
+			modelRuntime: fixture.modelRuntime,
+			settingsManager,
+			sessionManager,
+			noTools: "all",
+		}));
+		const notifications: string[] = [];
+		const printUI = tuiUI([], notifications);
+		await session.bindExtensions({ mode: "print", uiContext: printUI.uiContext });
+		await runCommand(session, "", undefined);
+		await runCommand(session, "test/m2 --thinking high", undefined);
+		await runCommand(session, "status", undefined);
+		assert.equal(session.model?.id, "m1");
+		assert.equal(session.thinkingLevel, "medium");
+		assert.equal(notifications.some((message) => message.includes("only available in TUI")), true);
+		assert.equal(notifications.some((message) => message.includes("unsupported")), true);
+	} finally {
+		await fixture.cleanup(session);
+	}
+});
+
+test("reset restores the baseline and an unauthenticated apply leaves the override inactive", async () => {
+	const fixture = await makeFixture({ repoRoot: packageRoot });
+	let session: AgentSession | undefined;
+	try {
+		fixture.modelRuntime.registerProvider("unauth", {
+			baseUrl: "https://example.invalid/v1",
+			api: "openai-completions",
+			apiKey: "dummy",
+			models: [{ id: "m4", name: "m4", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 10_000, maxTokens: 1_000 }],
+		});
+		const settingsManager = SettingsManager.create(fixture.cwd, fixture.agentDir);
+		const sessionManager = SessionManager.inMemory(fixture.cwd);
+		({ session } = await createAgentSession({
+			cwd: fixture.cwd,
+			agentDir: fixture.agentDir,
+			modelRuntime: fixture.modelRuntime,
+			settingsManager,
+			sessionManager,
+			noTools: "all",
+		}));
+		const notifications: string[] = [];
+		const ui = tuiUI(["m2", "\r", "\r"], notifications);
+		await runCommand(session, "", ui);
+		assert.equal(session.model?.id, "m2");
+		ui.setInputs([]);
+		await runCommand(session, "reset");
+		assert.equal(session.model?.id, "m1");
+		assert.equal(session.thinkingLevel, "medium");
+		const failureUI = tuiUI(["unauth", "\r", "\r"], notifications, () => fixture.modelRuntime.unregisterProvider("unauth"));
+		await runCommand(session, "", failureUI);
+		assert.equal(session.model?.id, "m1");
+		assert.equal(session.thinkingLevel, "medium");
+		assert.equal(notifications.some((message) => /authentication|auth/i.test(message)), true);
 	} finally {
 		await fixture.cleanup(session);
 	}
@@ -90,9 +221,7 @@ test("packed artifact loads through Pi integration fixture", async () => {
 	try {
 		await smokeExtensionFromExtracted(verified.extractedDir, packageRoot);
 	} finally {
-		if (verified.workDir) {
-			await rm(verified.workDir, { recursive: true, force: true });
-		}
+		if (verified.workDir) await rm(verified.workDir, { recursive: true, force: true });
 	}
 });
 
@@ -111,8 +240,7 @@ test("a transcript produced by the temporary model resumes from settings default
 			noTools: "all",
 		});
 		currentSession = first.session;
-		await currentSession.bindExtensions({ mode: "print" });
-		await currentSession.prompt("/session-only-model test/m2 --thinking high");
+		await runCommand(currentSession, "", tuiUI(["m2", "\r", "\r"]));
 		sessionManager.appendMessage(temporaryAssistant());
 		assert.deepEqual(sessionManager.buildSessionContext().model, { provider: "test", modelId: "m2" });
 

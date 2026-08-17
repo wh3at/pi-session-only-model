@@ -24,6 +24,7 @@
     "index.ts",
     "guard.ts",
     "command.ts",
+    "picker.ts",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
