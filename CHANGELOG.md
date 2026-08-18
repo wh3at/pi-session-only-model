@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.1
+
+- Add fuzzy input filtering to the thinking-level selection stage while preserving explicit confirmation and cancellation behavior.
+
 ## 0.2.0
 
 - Replace manual provider/model and thinking arguments with a searchable, TUI-only two-stage picker.
