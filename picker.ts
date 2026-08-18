@@ -80,13 +80,25 @@ export function getThinkingPickerItems(model: Model<Api>): ThinkingPickerItem[] 
 		}));
 }
 
+/** Fuzzy-search the thinking levels supported by the selected model. */
+export function filterThinkingPickerItems(
+	items: readonly ThinkingPickerItem[],
+	query: string,
+): ThinkingPickerItem[] {
+	if (!query.trim()) return [...items];
+	return fuzzyFilter([...items], query, (item) => item.label);
+}
+
 class SessionModelPickerComponent extends Container implements Focusable {
 	private _focused = false;
 	private phase: "model" | "thinking" | "done" = "model";
 	private readonly done: (selection: SessionModelSelection | undefined) => void;
 	private readonly modelItems: ModelPickerItem[];
-	private searchInput = new Input();
+	private readonly searchInput = new Input();
+	private readonly thinkingSearchInput = new Input();
 	private modelList: SelectList;
+	private thinkingItems: ThinkingPickerItem[] = [];
+	private thinkingModel: Model<Api> | undefined;
 	private thinkingList: SelectList | undefined;
 
 	constructor(modelItems: ModelPickerItem[], done: (selection: SessionModelSelection | undefined) => void) {
@@ -103,13 +115,19 @@ class SessionModelPickerComponent extends Container implements Focusable {
 
 	set focused(value: boolean) {
 		this._focused = value;
-		this.searchInput.focused = value;
+		this.searchInput.focused = value && this.phase === "model";
+		this.thinkingSearchInput.focused = value && this.phase === "thinking";
 	}
 
 	handleInput(data: string): void {
 		if (this.phase === "done") return;
 		if (this.phase === "thinking") {
 			this.thinkingList?.handleInput(data);
+			if (this.phase !== "thinking") return;
+			const previousQuery = this.thinkingSearchInput.getValue();
+			this.thinkingSearchInput.handleInput(data);
+			const query = this.thinkingSearchInput.getValue();
+			if (query !== previousQuery) this.updateThinkingList(query);
 			return;
 		}
 
@@ -153,20 +171,42 @@ class SessionModelPickerComponent extends Container implements Focusable {
 		}
 
 		this.phase = "thinking";
-		this.thinkingList = new SelectList(thinkingItems, 10, SELECT_LIST_THEME, {
+		this.thinkingItems = thinkingItems;
+		this.thinkingModel = model;
+		this.thinkingList = this.createThinkingList(model, thinkingItems);
+		this.focused = this._focused;
+		this.renderThinkingStage();
+	}
+
+	private createThinkingList(model: Model<Api>, items: readonly ThinkingPickerItem[]): SelectList {
+		const list = new SelectList([...items], 10, SELECT_LIST_THEME, {
 			minPrimaryColumnWidth: 12,
 			maxPrimaryColumnWidth: 24,
 		});
-		this.thinkingList.onSelect = (item) => {
+		list.onSelect = (item) => {
 			this.phase = "done";
 			this.done({ model, thinkingLevel: (item as ThinkingPickerItem).thinkingLevel });
 		};
-		this.thinkingList.onCancel = () => this.cancel();
+		list.onCancel = () => this.cancel();
+		return list;
+	}
 
+	private updateThinkingList(query: string): void {
+		if (!this.thinkingModel) return;
+		this.thinkingList = this.createThinkingList(
+			this.thinkingModel,
+			filterThinkingPickerItems(this.thinkingItems, query),
+		);
+		this.renderThinkingStage();
+	}
+
+	private renderThinkingStage(): void {
 		this.clear();
 		this.addChild(new Text("Select thinking level", 0, 0));
 		this.addChild(new Spacer(1));
-		this.addChild(this.thinkingList);
+		this.addChild(this.thinkingSearchInput);
+		this.addChild(new Spacer(1));
+		if (this.thinkingList) this.addChild(this.thinkingList);
 	}
 
 	private cancel(): void {

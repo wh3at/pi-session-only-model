@@ -6,6 +6,7 @@ import {
 	getPickerModels,
 	getThinkingPickerItems,
 	filterModelPickerItems,
+	filterThinkingPickerItems,
 	pickSessionModel,
 	type SessionModelPickerContext,
 	type SessionModelSelection,
@@ -114,6 +115,13 @@ test("thinking items use only levels the picker can apply", () => {
 	assert.deepEqual(getThinkingPickerItems(makeModel("test", "plain", "Plain", false)).map((item) => item.value), ["off"]);
 });
 
+test("thinking picker items can be fuzzy-filtered by level", () => {
+	const items = getThinkingPickerItems(makeModel("test", "reasoning", "Reasoning"));
+	assert.deepEqual(filterThinkingPickerItems(items, "hi").map((item) => item.value), ["high", "xhigh"]);
+	assert.deepEqual(filterThinkingPickerItems(items, " max ").map((item) => item.value), ["max"]);
+	assert.deepEqual(filterThinkingPickerItems(items, ""), items);
+});
+
 test("empty candidates notify without opening UI", async () => {
 	const context = pickerContext([], [], []);
 	assert.equal(await pickSessionModel(context), undefined);
@@ -139,6 +147,12 @@ test("search input filters the interactive model stage before confirmation", asy
 	const beta = makeModel("other", "beta", "Beta");
 	const context = pickerContext([], [alpha, beta], ["beta", "\r", "\r"]);
 	assert.deepEqual(await pickSessionModel(context), { model: beta, thinkingLevel: "minimal" });
+});
+
+test("search input filters the interactive thinking stage before confirmation", async () => {
+	const model = makeModel("test", "m1", "Model One");
+	const context = pickerContext([], [model], ["\r", "high", "\r"]);
+	assert.deepEqual(await pickSessionModel(context), { model, thinkingLevel: "high" });
 });
 
 test("cancelling model selection returns no result", async () => {
