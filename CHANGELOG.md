@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.2
+
 - Show recently used session models first in `/session-only-model` without changing thinking-level selection behavior.
 
 ## 0.2.1
