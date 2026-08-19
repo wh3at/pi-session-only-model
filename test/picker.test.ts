@@ -7,6 +7,7 @@ import {
 	getThinkingPickerItems,
 	filterModelPickerItems,
 	filterThinkingPickerItems,
+	prioritizeRecentModels,
 	pickSessionModel,
 	type SessionModelPickerContext,
 	type SessionModelSelection,
@@ -35,7 +36,10 @@ function makeModel(
 }
 
 function pickerContext(
-	scopedModels: readonly Model<any>[], availableModels: readonly Model<any>[], inputs: string[],
+	scopedModels: readonly Model<any>[],
+	availableModels: readonly Model<any>[],
+	inputs: string[],
+	recentModels: SessionModelPickerContext["recentModels"] = [],
 ): SessionModelPickerContext & { customCalls: () => number; availableCalls: () => number; notifications: string[] } {
 	let customCalls = 0;
 	let availableCalls = 0;
@@ -48,6 +52,7 @@ function pickerContext(
 				return [...availableModels];
 			},
 		},
+		recentModels,
 		ui: {
 			notify: (message: string) => notifications.push(message),
 			custom: (async (factory: any) => {
@@ -72,6 +77,22 @@ test("prefers non-empty scoped models and falls back to available models", () =>
 	assert.deepEqual(getPickerModels([{ model: scoped }], [available]), [scoped]);
 	assert.deepEqual(getPickerModels([], [available]), [available]);
 	assert.deepEqual(getPickerModels([], []), []);
+});
+
+test("prioritizes recent models without changing fallback order", () => {
+	const older = makeModel("test", "older", "Older");
+	const recent = makeModel("test", "recent", "Recent");
+	const latest = makeModel("test", "latest", "Latest");
+	const models = [older, recent, latest];
+
+	assert.deepEqual(
+		prioritizeRecentModels(models, [
+			{ provider: "test", id: "latest" },
+			{ provider: "test", id: "recent" },
+		]),
+		[latest, recent, older],
+	);
+	assert.deepEqual(models, [older, recent, latest]);
 });
 
 test("model picker items keep provider-qualified IDs and search all model fields", () => {
@@ -140,6 +161,14 @@ test("picker returns a model and explicitly selected thinking level", async () =
 	const model = makeModel("test", "m1", "Model One");
 	const context = pickerContext([], [model], ["\r", "\r"]);
 	assert.deepEqual(await pickSessionModel(context), { model, thinkingLevel: "minimal" satisfies ModelThinkingLevel });
+});
+
+test("picker selects the most recently used model first", async () => {
+	const older = makeModel("test", "older", "Older");
+	const recent = makeModel("test", "recent", "Recent");
+	const context = pickerContext([], [older, recent], ["\r", "\r"], [{ provider: "test", id: "recent" }]);
+
+	assert.deepEqual(await pickSessionModel(context), { model: recent, thinkingLevel: "minimal" });
 });
 
 test("search input filters the interactive model stage before confirmation", async () => {
