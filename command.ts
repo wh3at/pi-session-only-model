@@ -3,6 +3,10 @@ export interface ModelReference {
 	id: string;
 }
 
+export function modelReferenceKey(model: Pick<ModelReference, "provider" | "id">): string {
+	return `${model.provider}\u0000${model.id}`;
+}
+
 export type SessionModelCommand =
 	| { action: "pick" }
 	| { action: "reset" }

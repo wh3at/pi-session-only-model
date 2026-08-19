@@ -1,3 +1,4 @@
+import { modelReferenceKey, type ModelReference } from "./command.ts";
 import { getSupportedThinkingLevels, type Api, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ExtensionUIContext, ScopedModel } from "@earendil-works/pi-coding-agent";
 import {
@@ -30,6 +31,7 @@ export interface SessionModelPickerContext {
 	modelRegistry: {
 		getAvailable(): Model<Api>[];
 	};
+	recentModels?: readonly ModelReference[];
 	ui: Pick<ExtensionUIContext, "custom" | "notify">;
 }
 
@@ -47,6 +49,23 @@ export function getPickerModels(
 	availableModels: readonly Model<Api>[],
 ): Model<Api>[] {
 	return scopedModels.length > 0 ? scopedModels.map(({ model }) => model) : [...availableModels];
+}
+
+/** Put recently used models first while preserving the original order for the rest. */
+export function prioritizeRecentModels(
+	models: readonly Model<Api>[],
+	recentModels: readonly ModelReference[] = [],
+): Model<Api>[] {
+	if (recentModels.length === 0) return [...models];
+
+	const recency = new Map(recentModels.map((model, index) => [modelReferenceKey(model), index]));
+	return [...models].sort((a, b) => {
+		const aRank = recency.get(modelReferenceKey(a));
+		const bRank = recency.get(modelReferenceKey(b));
+		if (aRank === undefined) return bRank === undefined ? 0 : 1;
+		if (bRank === undefined) return -1;
+		return aRank - bRank;
+	});
 }
 
 function modelSearchText(model: Model<Api>): string {
@@ -224,7 +243,8 @@ export async function pickSessionModel(
 	ctx: SessionModelPickerContext,
 ): Promise<SessionModelSelection | undefined> {
 	const availableModels = ctx.scopedModels.length > 0 ? [] : ctx.modelRegistry.getAvailable();
-	const items = getModelPickerItems(getPickerModels(ctx.scopedModels, availableModels));
+	const models = prioritizeRecentModels(getPickerModels(ctx.scopedModels, availableModels), ctx.recentModels);
+	const items = getModelPickerItems(models);
 	if (items.length === 0) {
 		ctx.ui.notify("No models are available for this session.", "warning");
 		return undefined;

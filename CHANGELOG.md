@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show recently used session models first in `/session-only-model` without changing thinking-level selection behavior.
+
 ## 0.2.1
 
 - Add fuzzy input filtering to the thinking-level selection stage while preserving explicit confirmation and cancellation behavior.
