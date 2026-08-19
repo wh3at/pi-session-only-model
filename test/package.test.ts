@@ -421,21 +421,32 @@ test("malformed Pi metadata fails verification", () => {
 });
 
 test("repacked tarball digest mismatch is rejected as publish input", async () => {
-	const packDir = await mkdtemp(join(tmpdir(), "pi-session-only-model-repack-"));
-	const manifestPath = join(packageRoot, "package.json");
-	const originalManifest = await readFile(manifestPath, "utf8");
+	const workDir = await mkdtemp(join(tmpdir(), "pi-session-only-model-repack-"));
+	const fixtureRoot = join(workDir, "fixture");
+	const packDir = join(workDir, "pack");
 	try {
-		const baseline = await packOnce(packageRoot, packDir);
-		const mutatedManifest = JSON.parse(originalManifest);
-		mutatedManifest.description = `${mutatedManifest.description} repack-check`;
+		const originalManifest = JSON.parse(
+			await readFile(join(packageRoot, "package.json"), "utf8"),
+		);
+		await mkdir(fixtureRoot, { recursive: true });
+		for (const file of originalManifest.files) {
+			await cp(join(packageRoot, file), join(fixtureRoot, file), { recursive: true });
+		}
+		const manifestPath = join(fixtureRoot, "package.json");
+		await writeFile(manifestPath, JSON.stringify(originalManifest, null, 2), "utf8");
+
+		const baseline = await packOnce(fixtureRoot, packDir);
+		const mutatedManifest = {
+			...originalManifest,
+			description: `${originalManifest.description} repack-check`,
+		};
 		await writeFile(manifestPath, JSON.stringify(mutatedManifest, null, 2), "utf8");
 		await assert.rejects(
-			() => verifyPackage({ packageRoot, expectedDigest: baseline.digest }),
+			() => verifyPackage({ packageRoot: fixtureRoot, expectedDigest: baseline.digest }),
 			/digest mismatch/i,
 		);
 	} finally {
-		await writeFile(manifestPath, originalManifest, "utf8");
-		await rm(packDir, { recursive: true, force: true });
+		await rm(workDir, { recursive: true, force: true });
 	}
 });
 
