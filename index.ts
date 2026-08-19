@@ -257,7 +257,12 @@ export default function sessionOnlyModel(pi: ExtensionAPI): void {
 		lease.markSessionReady(ctx.sessionManager as object);
 		const id = sessionId(ctx);
 		if (event.reason !== "reload") state.activeOverride = undefined;
-		seedRecentModels(state, ctx, id);
+		// Reload retains the in-memory recency list intentionally: session-only
+		// selections never become model_change entries, so reseeding from the
+		// transcript would drop the current temporary model behind older history.
+		if (event.reason !== "reload" || state.recentModelsSessionId !== id) {
+			seedRecentModels(state, ctx, id);
+		}
 		state.restoreSuppressionSessionId = latestRestorePolicy(ctx)?.suppressRestore ? id : undefined;
 		if (lease.restoreFilterAssumed && !restoreFilterWarningShown) {
 			restoreFilterWarningShown = true;
