@@ -33,7 +33,7 @@ Run the command without arguments in Pi's interactive TUI:
 /session-only-model
 ```
 
-1. Search and select a model from Pi's current model scope. Recently used models in the current session appear first; the remaining models keep their existing order. The search matches provider, provider-qualified model ID, bare model ID, and display name.
+1. Search and select a model from Pi's current model scope. Recently used models across sessions appear first; the remaining models keep their existing order. The search matches provider, provider-qualified model ID, bare model ID, and display name.
 2. Search and select one thinking level supported by that model.
 3. Both selections are applied together to the current in-memory session.
 

@@ -25,6 +25,7 @@
     "guard.ts",
     "command.ts",
     "picker.ts",
+    "recent-history.ts",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

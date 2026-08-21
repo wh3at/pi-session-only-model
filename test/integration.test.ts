@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -123,15 +123,17 @@ test("picker applies one confirmed model/thinking pair while a normal model chan
 		assert.equal(session.model?.id, "m3");
 		assert.equal(sessionManager.getEntries().some((entry) => entry.type === "model_change" && entry.modelId === "m3"), true);
 		assert.equal(JSON.parse(await readFile(join(fixture.agentDir, "settings.json"), "utf8")).defaultModel, "m3");
-		ui.setInputs(["\r", "\r"]);
-		await runCommand(session, "");
-		assert.equal(session.model?.id, "m3");
+		// A normal /model change must not be recorded into the session-only recency history (R6).
+		assert.deepEqual(
+			JSON.parse(await readFile(join(fixture.agentDir, "recent-session-models.json"), "utf8")),
+			[{ provider: "test", id: "m2" }],
+		);
 	} finally {
 		await fixture.cleanup(session);
 	}
 });
 
-test("reseed follows model history after session tree navigation", async () => {
+test("session-only model stays ahead after tree navigation", async () => {
 	const fixture = await makeFixture({ repoRoot: packageRoot });
 	let session: AgentSession | undefined;
 	try {
@@ -145,15 +147,16 @@ test("reseed follows model history after session tree navigation", async () => {
 			sessionManager,
 			noTools: "all",
 		}));
-		const ui = tuiUI(["\r", "\r"]);
-		await session.bindExtensions({ mode: "tui", uiContext: ui.uiContext });
+		// Select m2 through /session-only-model so it is recorded as recently used.
+		await runCommand(session, "", tuiUI(["m2", "\r", "\r"]));
+		assert.equal(session.model?.id, "m2");
 
-		const modelChangeId = sessionManager.appendModelChange("test", "m2");
+		// Navigating to an older transcript point must not drop the persisted
+		// recency; the picker still promotes m2 from the history file (R4).
+		const modelChangeId = sessionManager.appendModelChange("test", "m3");
 		sessionManager.appendMessage(temporaryAssistant());
 		await session.navigateTree(modelChangeId, { summarize: false });
-
-		assert.equal(session.model?.id, "m1");
-		await runCommand(session, "");
+		await runCommand(session, "", tuiUI(["\r", "\r"]));
 		assert.equal(session.model?.id, "m2");
 	} finally {
 		await fixture.cleanup(session);
@@ -347,7 +350,7 @@ test("a transcript produced by the temporary model resumes from settings default
 	}
 });
 
-test("recent models do not leak between sessions", async () => {
+test("recently used model persists across sessions", async () => {
 	const fixture = await makeFixture({ repoRoot: packageRoot });
 	let firstSession: AgentSession | undefined;
 	let secondSession: AgentSession | undefined;
@@ -363,7 +366,13 @@ test("recent models do not leak between sessions", async () => {
 			noTools: "all",
 		}));
 		await runCommand(firstSession, "", tuiUI(["m2", "\r", "\r"]));
+		assert.equal(firstSession.model?.id, "m2");
 
+		// A fresh session on the same agent dir shares the persisted history
+		// (across sessions and Pi restarts), so m2 is still promoted (R2, R4).
+		await firstSession.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+		firstSession.dispose();
+		firstSession = undefined;
 		const secondManager = SessionManager.inMemory(fixture.cwd);
 		({ session: secondSession } = await createAgentSession({
 			cwd: fixture.cwd,
@@ -374,17 +383,13 @@ test("recent models do not leak between sessions", async () => {
 			noTools: "all",
 		}));
 		await runCommand(secondSession, "", tuiUI(["\r", "\r"]));
-		assert.equal(secondSession.model?.id, "m1");
+		assert.equal(secondSession.model?.id, "m2");
 	} finally {
 		if (secondSession) {
-			if (firstSession) {
-				await firstSession.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-				firstSession.dispose();
-			}
-			await fixture.cleanup(secondSession);
-		} else {
-			await fixture.cleanup(firstSession);
+			await secondSession.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+			secondSession.dispose();
 		}
+		await fixture.cleanup(firstSession ?? secondSession);
 	}
 
 });
@@ -409,11 +414,96 @@ test("hot reload keeps the temporary model ahead of older transcript history", a
 		await runCommand(session, "", ui);
 		assert.equal(session.model?.id, "m2");
 
-		// Reload rebuilds the runtime without persisting the temporary model, so
-		// the retained in-memory recency must stay ahead of the transcript.
+		// Reload rebuilds the runtime, but the recent model is read back from the
+		// persisted history file, so m2 stays ahead of the older transcript.
 		await session.reload();
 		ui.setInputs(["\r", "\r"]);
 		await runCommand(session, "");
+		assert.equal(session.model?.id, "m2");
+	} finally {
+		await fixture.cleanup(session);
+	}
+});
+
+test("canceling the picker leaves the persisted history unchanged", async () => {
+	const fixture = await makeFixture({ repoRoot: packageRoot });
+	let session: AgentSession | undefined;
+	try {
+		const settingsManager = SettingsManager.create(fixture.cwd, fixture.agentDir);
+		const sessionManager = SessionManager.inMemory(fixture.cwd);
+		({ session } = await createAgentSession({
+			cwd: fixture.cwd,
+			agentDir: fixture.agentDir,
+			modelRuntime: fixture.modelRuntime,
+			settingsManager,
+			sessionManager,
+			noTools: "all",
+		}));
+		await runCommand(session, "", tuiUI(["m2", "\r", "\r"]));
+		assert.equal(session.model?.id, "m2");
+		const historyPath = join(fixture.agentDir, "recent-session-models.json");
+		assert.deepEqual(JSON.parse(await readFile(historyPath, "utf8")), [{ provider: "test", id: "m2" }]);
+		// Canceling the model stage returns no selection, so nothing is recorded (R7).
+		await runCommand(session, "", tuiUI(["\u001b"]));
+		assert.equal(session.model?.id, "m2");
+		assert.deepEqual(JSON.parse(await readFile(historyPath, "utf8")), [{ provider: "test", id: "m2" }]);
+	} finally {
+		await fixture.cleanup(session);
+	}
+});
+
+test("a failed apply does not write to the persisted history", async () => {
+	const fixture = await makeFixture({ repoRoot: packageRoot });
+	let session: AgentSession | undefined;
+	try {
+		fixture.modelRuntime.registerProvider("unauth", {
+			baseUrl: "https://example.invalid/v1",
+			api: "openai-completions",
+			apiKey: "dummy",
+			models: [{ id: "m4", name: "m4", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 10_000, maxTokens: 1_000 }],
+		});
+		const settingsManager = SettingsManager.create(fixture.cwd, fixture.agentDir);
+		const sessionManager = SessionManager.inMemory(fixture.cwd);
+		({ session } = await createAgentSession({
+			cwd: fixture.cwd,
+			agentDir: fixture.agentDir,
+			modelRuntime: fixture.modelRuntime,
+			settingsManager,
+			sessionManager,
+			noTools: "all",
+		}));
+		await runCommand(session, "", tuiUI(["m2", "\r", "\r"]));
+		const historyPath = join(fixture.agentDir, "recent-session-models.json");
+		assert.deepEqual(JSON.parse(await readFile(historyPath, "utf8")), [{ provider: "test", id: "m2" }]);
+		// An unauthenticated apply fails; the selection is discarded, not recorded (R7).
+		const notifications: string[] = [];
+		const failureUI = tuiUI(["unauth", "\r", "\r"], notifications, () => fixture.modelRuntime.unregisterProvider("unauth"));
+		await runCommand(session, "", failureUI);
+		assert.equal(notifications.some((message) => /authentication|auth/i.test(message)), true);
+		assert.equal(session.model?.id, "m2");
+		assert.deepEqual(JSON.parse(await readFile(historyPath, "utf8")), [{ provider: "test", id: "m2" }]);
+	} finally {
+		await fixture.cleanup(session);
+	}
+});
+
+test("picker opens when the recent history file is corrupt", async () => {
+	const fixture = await makeFixture({ repoRoot: packageRoot });
+	let session: AgentSession | undefined;
+	try {
+		const settingsManager = SettingsManager.create(fixture.cwd, fixture.agentDir);
+		const sessionManager = SessionManager.inMemory(fixture.cwd);
+		({ session } = await createAgentSession({
+			cwd: fixture.cwd,
+			agentDir: fixture.agentDir,
+			modelRuntime: fixture.modelRuntime,
+			settingsManager,
+			sessionManager,
+			noTools: "all",
+		}));
+		// A corrupt history file must not crash the picker; it opens with no promotion (R7).
+		await writeFile(join(fixture.agentDir, "recent-session-models.json"), "{ not valid json", "utf8");
+		await runCommand(session, "", tuiUI(["m2", "\r", "\r"]));
 		assert.equal(session.model?.id, "m2");
 	} finally {
 		await fixture.cleanup(session);
