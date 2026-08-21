@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## 0.2.3
 
 - Persist the recently used session-model history to disk so it survives Pi restarts and is shared across projects, while `/session-only-model` remains the only source that records it.
