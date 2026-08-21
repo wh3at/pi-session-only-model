@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,33 +17,47 @@ test.afterEach(async () => {
 	await rm(historyDir, { recursive: true, force: true });
 });
 
-test("loadHistory returns an empty list when no history exists", () => {
-	assert.deepEqual(loadHistory(), []);
+test("loadHistory returns an empty list when no history exists", async () => {
+	assert.deepEqual(await loadHistory(), []);
 });
 
-test("recordHistory dedupes to the most recent entry and caps at five", () => {
-	recordHistory({ provider: "test", id: "m1" });
-	recordHistory({ provider: "test", id: "m2" });
-	recordHistory({ provider: "test", id: "m1" });
-	assert.deepEqual(loadHistory(), [
+test("recordHistory dedupes to the most recent entry and caps at five", async () => {
+	await recordHistory({ provider: "test", id: "m1" });
+	await recordHistory({ provider: "test", id: "m2" });
+	await recordHistory({ provider: "test", id: "m1" });
+	assert.deepEqual(await loadHistory(), [
 		{ provider: "test", id: "m1" },
 		{ provider: "test", id: "m2" },
 	]);
 	for (let index = 3; index <= 7; index++) {
-		recordHistory({ provider: "test", id: `m${index}` });
+		await recordHistory({ provider: "test", id: `m${index}` });
 	}
-	const history = loadHistory();
+	const history = await loadHistory();
 	assert.equal(history.length, 5);
 	assert.deepEqual(history[0], { provider: "test", id: "m7" });
 	assert.deepEqual(history.at(-1), { provider: "test", id: "m3" });
 });
 
-test("recordHistory survives a load/record round trip through storage", () => {
-	recordHistory({ provider: "test", id: "m2" });
-	assert.deepEqual(loadHistory(), [{ provider: "test", id: "m2" }]);
+test("recordHistory serializes concurrent updates", async () => {
+	await Promise.all([
+		recordHistory({ provider: "test", id: "m1" }),
+		recordHistory({ provider: "test", id: "m2" }),
+	]);
+	const ids = (await loadHistory()).map((model) => model.id);
+	assert.equal(ids.length, 2);
+	assert.deepEqual(new Set(ids), new Set(["m1", "m2"]));
 });
 
-test("loadHistory returns an empty list when the file is corrupt", async () => {
-	await writeFile(join(historyDir, "recent-session-models.json"), "{ not valid json", "utf8");
-	assert.deepEqual(loadHistory(), []);
+test("recordHistory survives a load/record round trip through storage", async () => {
+	await recordHistory({ provider: "test", id: "m2" });
+	assert.deepEqual(await loadHistory(), [{ provider: "test", id: "m2" }]);
+});
+
+test("a corrupt history remains unchanged", async () => {
+	const path = join(historyDir, "recent-session-models.json");
+	const corrupt = "{ not valid json";
+	await writeFile(path, corrupt, "utf8");
+	assert.deepEqual(await loadHistory(), []);
+	await assert.rejects(recordHistory({ provider: "test", id: "m2" }), /left unchanged/);
+	assert.equal(await readFile(path, "utf8"), corrupt);
 });

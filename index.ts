@@ -145,7 +145,7 @@ async function setSessionModel(
 
 	// Record recency after a successful apply; a storage failure must not undo the apply.
 	try {
-		recordHistory(selection.model);
+		await recordHistory(selection.model);
 	} catch (error) {
 		ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
 	}
@@ -296,7 +296,7 @@ export default function sessionOnlyModel(pi: ExtensionAPI): void {
 			const selection = await pickSessionModel({
 				scopedModels: ctx.scopedModels,
 				modelRegistry: ctx.modelRegistry,
-				recentModels: loadHistory(),
+				recentModels: await loadHistory(),
 				ui: ctx.ui,
 			});
 			if (!selection) return;
