@@ -6,7 +6,6 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
-	modelReferenceKey,
 	parseSessionModelCommand,
 	type ModelReference,
 } from "./command.ts";
@@ -20,6 +19,10 @@ import {
 	SESSION_MODEL_MARKER_TYPE,
 	type RestorePolicyMarker,
 } from "./guard.ts";
+import {
+	loadHistory,
+	recordHistory,
+} from "./recent-history.ts";
 
 type PiThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
 
@@ -37,8 +40,6 @@ interface RuntimeState {
 	schemaVersion: 2;
 	activeOverride?: ActiveOverride;
 	restoreSuppressionSessionId?: string;
-	recentModelsSessionId?: string;
-	recentModels?: ModelReference[];
 }
 
 const EXTENSION_NAME = "pi-session-only-model";
@@ -72,48 +73,7 @@ function currentModel(ctx: ExtensionContext): ModelReference | undefined {
 	return ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
 }
 
-function rememberRecentModel(
-	state: RuntimeState,
-	sessionIdValue: string,
-	model: Pick<ModelReference, "provider" | "id">,
-): void {
-	const recentModels = state.recentModelsSessionId === sessionIdValue ? state.recentModels ?? [] : [];
-	const reference: ModelReference = { provider: model.provider, id: model.id };
-	const key = modelReferenceKey(reference);
-	if (recentModels[0] && modelReferenceKey(recentModels[0]) === key) return;
 
-	state.recentModelsSessionId = sessionIdValue;
-	state.recentModels = [
-		reference,
-		...recentModels.filter((recent) => modelReferenceKey(recent) !== key),
-	];
-}
-
-function seedRecentModels(state: RuntimeState, ctx: ExtensionContext, id: string): void {
-	const recentModels: ModelReference[] = [];
-	const seen = new Set<string>();
-	const add = (model: Pick<ModelReference, "provider" | "id">): void => {
-		const reference: ModelReference = { provider: model.provider, id: model.id };
-		const key = modelReferenceKey(reference);
-		if (seen.has(key)) return;
-		seen.add(key);
-		recentModels.push(reference);
-	};
-
-	const branch = ctx.sessionManager.getBranch();
-	for (let index = branch.length - 1; index >= 0; index--) {
-		const entry = branch[index];
-		if (entry.type === "model_change") {
-			add({ provider: entry.provider, id: entry.modelId });
-		} else if (entry.type === "message" && entry.message.role === "assistant") {
-			add({ provider: entry.message.provider, id: entry.message.model });
-		}
-	}
-	if (ctx.model) add(ctx.model);
-
-	state.recentModelsSessionId = id;
-	state.recentModels = recentModels;
-}
 
 function formatModel(model: ModelReference | undefined): string {
 	return model ? `${model.provider}/${model.id}` : "(none)";
@@ -183,7 +143,12 @@ async function setSessionModel(
 		return;
 	}
 
-	rememberRecentModel(state, sessionId(ctx), selection.model);
+	// Record recency after a successful apply; a storage failure must not undo the apply.
+	try {
+		recordHistory(selection.model);
+	} catch (error) {
+		ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
+	}
 
 	state.activeOverride = { sessionId: sessionId(ctx), baseline };
 	state.restoreSuppressionSessionId = sessionId(ctx);
@@ -257,12 +222,6 @@ export default function sessionOnlyModel(pi: ExtensionAPI): void {
 		lease.markSessionReady(ctx.sessionManager as object);
 		const id = sessionId(ctx);
 		if (event.reason !== "reload") state.activeOverride = undefined;
-		// Reload retains the in-memory recency list intentionally: session-only
-		// selections never become model_change entries, so reseeding from the
-		// transcript would drop the current temporary model behind older history.
-		if (event.reason !== "reload" || state.recentModelsSessionId !== id) {
-			seedRecentModels(state, ctx, id);
-		}
 		state.restoreSuppressionSessionId = latestRestorePolicy(ctx)?.suppressRestore ? id : undefined;
 		if (lease.restoreFilterAssumed && !restoreFilterWarningShown) {
 			restoreFilterWarningShown = true;
@@ -280,16 +239,11 @@ export default function sessionOnlyModel(pi: ExtensionAPI): void {
 			const id = sessionId(ctx);
 			if (state.activeOverride?.sessionId === id) state.activeOverride = undefined;
 			if (state.restoreSuppressionSessionId === id) state.restoreSuppressionSessionId = undefined;
-			if (state.recentModelsSessionId === id) {
-				state.recentModelsSessionId = undefined;
-				state.recentModels = undefined;
-			}
 		}
 	});
 
 	pi.on("model_select", (event, ctx) => {
 		const id = sessionId(ctx);
-		rememberRecentModel(state, id, event.model);
 		if (lease.isSessionOnlyActive() || event.source === "restore") return;
 		const hadSessionPolicy =
 			state.activeOverride?.sessionId === id ||
@@ -301,7 +255,6 @@ export default function sessionOnlyModel(pi: ExtensionAPI): void {
 	});
 	pi.on("session_tree", (_event, ctx) => {
 		const id = sessionId(ctx);
-		seedRecentModels(state, ctx, id);
 		if (state.restoreSuppressionSessionId === id) {
 			// Tree navigation can move to a branch before the previous marker.
 			appendRestorePolicy(pi, true, "session-only-model");
@@ -343,7 +296,7 @@ export default function sessionOnlyModel(pi: ExtensionAPI): void {
 			const selection = await pickSessionModel({
 				scopedModels: ctx.scopedModels,
 				modelRegistry: ctx.modelRegistry,
-				recentModels: state.recentModelsSessionId === sessionId(ctx) ? state.recentModels : undefined,
+				recentModels: loadHistory(),
 				ui: ctx.ui,
 			});
 			if (!selection) return;

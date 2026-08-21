@@ -181,13 +181,15 @@ export async function makeFixture(options = {}) {
 	const cwd = join(fixtureRoot, "cwd");
 	const agentDir = join(fixtureRoot, "agent");
 	const extensionDir = join(agentDir, "extensions", "pi-session-only-model");
+	// Scope the recent-model history to this fixture so parallel and repeated runs never share a real agent directory file.
+	process.env.PI_SESSION_ONLY_MODEL_HISTORY_DIR = agentDir;
 	await mkdir(cwd, { recursive: true });
 	await mkdir(extensionDir, { recursive: true });
 	const sourceDir = options.extensionSourceDir ?? root;
 	if (options.extensionSourceDir) {
 		await installExtensionSources(extensionDir, sourceDir);
 	} else {
-		for (const file of ["index.ts", "guard.ts", "command.ts", "picker.ts"]) {
+		for (const file of ["index.ts", "guard.ts", "command.ts", "picker.ts", "recent-history.ts"]) {
 			await cp(join(sourceDir, file), join(extensionDir, file));
 		}
 	}
