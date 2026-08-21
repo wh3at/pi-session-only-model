@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Persist the recently used session-model history to disk so it survives Pi restarts and is shared across projects, while `/session-only-model` remains the only source that records it.
+
 ## 0.2.2
 
 - Show recently used session models first in `/session-only-model` without changing thinking-level selection behavior.
