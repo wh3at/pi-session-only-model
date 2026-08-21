@@ -38,8 +38,7 @@ export function loadHistory(): ModelReference[] {
 				typeof (model as ModelReference).provider === "string" &&
 				typeof (model as ModelReference).id === "string",
 		);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+	} catch {
 		return [];
 	}
 }
