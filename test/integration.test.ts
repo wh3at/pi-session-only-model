@@ -118,7 +118,11 @@ test("picker applies one confirmed model/thinking pair while a normal model chan
 		assert.equal(session.model?.id, "m2");
 		assert.equal(session.thinkingLevel, "minimal");
 
-		await session.setModel(fixture.modelRuntime.getModel("test", "m3")!);
+		const setModel = session!.setModel.bind(session!) as unknown as (
+			model: Parameters<AgentSession["setModel"]>[0],
+			options?: { persist?: boolean },
+		) => Promise<void>;
+		await setModel(fixture.modelRuntime.getModel("test", "m3")!, { persist: true });
 		await settingsManager.flush();
 		assert.equal(session.model?.id, "m3");
 		assert.equal(sessionManager.getEntries().some((entry) => entry.type === "model_change" && entry.modelId === "m3"), true);
