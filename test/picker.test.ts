@@ -51,6 +51,7 @@ function pickerContext(
 				availableCalls++;
 				return [...availableModels];
 			},
+			refresh: async () => {},
 		},
 		recentModels,
 		ui: {
@@ -148,6 +149,26 @@ test("empty candidates notify without opening UI", async () => {
 	assert.equal(await pickSessionModel(context), undefined);
 	assert.equal(context.customCalls(), 0);
 	assert.equal(context.notifications.some((message) => message.includes("No models")), true);
+});
+
+test("picker refreshes the available catalog before showing candidates", async () => {
+	const refreshed = makeModel("zai", "glm-5.3-flash", "GLM 5.3 Flash");
+	const context = pickerContext([], [], ["\r", "\r"]);
+	context.modelRegistry.refresh = async () => {
+		context.modelRegistry.getAvailable = () => [refreshed];
+	};
+
+	assert.deepEqual(await pickSessionModel(context), { model: refreshed, thinkingLevel: "minimal" });
+});
+
+test("picker falls back to cached candidates when catalog refresh fails", async () => {
+	const cached = makeModel("test", "cached", "Cached");
+	const context = pickerContext([], [cached], ["\r", "\r"]);
+	context.modelRegistry.refresh = async () => {
+		throw new Error("catalog unavailable");
+	};
+
+	assert.deepEqual(await pickSessionModel(context), { model: cached, thinkingLevel: "minimal" });
 });
 
 test("scoped candidates do not load the available catalog", async () => {

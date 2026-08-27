@@ -29,6 +29,7 @@ export interface SessionModelSelection {
 export interface SessionModelPickerContext {
 	scopedModels: readonly ScopedModel[];
 	modelRegistry: {
+		refresh(): Promise<unknown>;
 		getAvailable(): Model<Api>[];
 	};
 	recentModels?: readonly ModelReference[];
@@ -242,7 +243,15 @@ class SessionModelPickerComponent extends Container implements Focusable {
 export async function pickSessionModel(
 	ctx: SessionModelPickerContext,
 ): Promise<SessionModelSelection | undefined> {
-	const availableModels = ctx.scopedModels.length > 0 ? [] : ctx.modelRegistry.getAvailable();
+	let availableModels: Model<Api>[] = [];
+	if (ctx.scopedModels.length === 0) {
+		try {
+			await ctx.modelRegistry.refresh();
+		} catch {
+			ctx.ui.notify("Could not refresh model catalogs; showing cached models.", "warning");
+		}
+		availableModels = ctx.modelRegistry.getAvailable();
+	}
 	const models = prioritizeRecentModels(getPickerModels(ctx.scopedModels, availableModels), ctx.recentModels);
 	const items = getModelPickerItems(models);
 	if (items.length === 0) {
