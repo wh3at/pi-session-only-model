@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.4
+
+- Refresh Pi's model catalog before opening the unscoped `/session-only-model` picker so newly published models are selectable, while falling back to cached models when refresh fails.
+
 ## 0.2.3
 
 - Persist the recently used session-model history to disk so it survives Pi restarts and is shared across projects, while `/session-only-model` remains the only source that records it.
