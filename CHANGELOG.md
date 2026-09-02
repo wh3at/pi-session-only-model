@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.5
+
 - Keep `/session-only-model` unscoped when Pi has a configured model scope, so all available models remain selectable.
 
 ## 0.2.4
