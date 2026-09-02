@@ -294,7 +294,6 @@ export default function sessionOnlyModel(pi: ExtensionAPI): void {
 				return;
 			}
 			const selection = await pickSessionModel({
-				scopedModels: ctx.scopedModels,
 				modelRegistry: ctx.modelRegistry,
 				recentModels: await loadHistory(),
 				ui: ctx.ui,

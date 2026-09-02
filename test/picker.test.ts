@@ -3,7 +3,6 @@ import test from "node:test";
 import type { Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	getModelPickerItems,
-	getPickerModels,
 	getThinkingPickerItems,
 	filterModelPickerItems,
 	filterThinkingPickerItems,
@@ -36,7 +35,6 @@ function makeModel(
 }
 
 function pickerContext(
-	scopedModels: readonly Model<any>[],
 	availableModels: readonly Model<any>[],
 	inputs: string[],
 	recentModels: SessionModelPickerContext["recentModels"] = [],
@@ -45,7 +43,6 @@ function pickerContext(
 	let availableCalls = 0;
 	const notifications: string[] = [];
 	return {
-		scopedModels: scopedModels.map((model) => ({ model })),
 		modelRegistry: {
 			getAvailable: () => {
 				availableCalls++;
@@ -72,13 +69,6 @@ function pickerContext(
 	};
 }
 
-test("prefers non-empty scoped models and falls back to available models", () => {
-	const scoped = makeModel("scoped", "model", "Scoped");
-	const available = makeModel("available", "model", "Available");
-	assert.deepEqual(getPickerModels([{ model: scoped }], [available]), [scoped]);
-	assert.deepEqual(getPickerModels([], [available]), [available]);
-	assert.deepEqual(getPickerModels([], []), []);
-});
 
 test("prioritizes recent models without changing fallback order", () => {
 	const older = makeModel("test", "older", "Older");
@@ -145,7 +135,7 @@ test("thinking picker items can be fuzzy-filtered by level", () => {
 });
 
 test("empty candidates notify without opening UI", async () => {
-	const context = pickerContext([], [], []);
+	const context = pickerContext([], []);
 	assert.equal(await pickSessionModel(context), undefined);
 	assert.equal(context.customCalls(), 0);
 	assert.equal(context.notifications.some((message) => message.includes("No models")), true);
@@ -153,7 +143,7 @@ test("empty candidates notify without opening UI", async () => {
 
 test("picker refreshes the available catalog before showing candidates", async () => {
 	const refreshed = makeModel("zai", "glm-5.3-flash", "GLM 5.3 Flash");
-	const context = pickerContext([], [], ["\r", "\r"]);
+	const context = pickerContext([], ["\r", "\r"]);
 	context.modelRegistry.refresh = async () => {
 		context.modelRegistry.getAvailable = () => [refreshed];
 	};
@@ -163,7 +153,7 @@ test("picker refreshes the available catalog before showing candidates", async (
 
 test("picker falls back to cached candidates when catalog refresh fails", async () => {
 	const cached = makeModel("test", "cached", "Cached");
-	const context = pickerContext([], [cached], ["\r", "\r"]);
+	const context = pickerContext([cached], ["\r", "\r"]);
 	context.modelRegistry.refresh = async () => {
 		throw new Error("catalog unavailable");
 	};
@@ -171,23 +161,25 @@ test("picker falls back to cached candidates when catalog refresh fails", async 
 	assert.deepEqual(await pickSessionModel(context), { model: cached, thinkingLevel: "minimal" });
 });
 
-test("scoped candidates do not load the available catalog", async () => {
+test("picker offers every available model independently of Pi's model scope", async () => {
 	const scoped = makeModel("scoped", "model", "Scoped");
-	const context = pickerContext([scoped], [], ["\r", "\r"]);
-	assert.deepEqual(await pickSessionModel(context), { model: scoped, thinkingLevel: "minimal" });
-	assert.equal(context.availableCalls(), 0);
+	const outsideScope = makeModel("available", "outside-scope", "Outside scope");
+	const context = pickerContext([scoped, outsideScope], ["outside", "\r", "\r"]);
+
+	assert.deepEqual(await pickSessionModel(context), { model: outsideScope, thinkingLevel: "minimal" });
+	assert.equal(context.availableCalls(), 1);
 });
 
 test("picker returns a model and explicitly selected thinking level", async () => {
 	const model = makeModel("test", "m1", "Model One");
-	const context = pickerContext([], [model], ["\r", "\r"]);
+	const context = pickerContext([model], ["\r", "\r"]);
 	assert.deepEqual(await pickSessionModel(context), { model, thinkingLevel: "minimal" satisfies ModelThinkingLevel });
 });
 
 test("picker selects the most recently used model first", async () => {
 	const older = makeModel("test", "older", "Older");
 	const recent = makeModel("test", "recent", "Recent");
-	const context = pickerContext([], [older, recent], ["\r", "\r"], [{ provider: "test", id: "recent" }]);
+	const context = pickerContext([older, recent], ["\r", "\r"], [{ provider: "test", id: "recent" }]);
 
 	assert.deepEqual(await pickSessionModel(context), { model: recent, thinkingLevel: "minimal" });
 });
@@ -195,24 +187,24 @@ test("picker selects the most recently used model first", async () => {
 test("search input filters the interactive model stage before confirmation", async () => {
 	const alpha = makeModel("test", "alpha", "Alpha");
 	const beta = makeModel("other", "beta", "Beta");
-	const context = pickerContext([], [alpha, beta], ["beta", "\r", "\r"]);
+	const context = pickerContext([alpha, beta], ["beta", "\r", "\r"]);
 	assert.deepEqual(await pickSessionModel(context), { model: beta, thinkingLevel: "minimal" });
 });
 
 test("search input filters the interactive thinking stage before confirmation", async () => {
 	const model = makeModel("test", "m1", "Model One");
-	const context = pickerContext([], [model], ["\r", "high", "\r"]);
+	const context = pickerContext([model], ["\r", "high", "\r"]);
 	assert.deepEqual(await pickSessionModel(context), { model, thinkingLevel: "high" });
 });
 
 test("cancelling model selection returns no result", async () => {
 	const model = makeModel("test", "m1", "Model One");
-	const context = pickerContext([], [model], ["\u001b"]);
+	const context = pickerContext([model], ["\u001b"]);
 	assert.equal(await pickSessionModel(context), undefined);
 });
 
 test("cancelling thinking selection returns no result after model selection", async () => {
 	const model = makeModel("test", "m1", "Model One");
-	const context = pickerContext([], [model], ["\r", "\u001b"]);
+	const context = pickerContext([model], ["\r", "\u001b"]);
 	assert.equal(await pickSessionModel(context), undefined);
 });

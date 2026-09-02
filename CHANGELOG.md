@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep `/session-only-model` unscoped when Pi has a configured model scope, so all available models remain selectable.
+
 ## 0.2.4
 
 - Refresh Pi's model catalog before opening the unscoped `/session-only-model` picker so newly published models are selectable, while falling back to cached models when refresh fails.

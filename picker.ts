@@ -1,6 +1,6 @@
 import { modelReferenceKey, type ModelReference } from "./command.ts";
 import { getSupportedThinkingLevels, type Api, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
-import type { ExtensionUIContext, ScopedModel } from "@earendil-works/pi-coding-agent";
+import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
 	fuzzyFilter,
@@ -27,7 +27,6 @@ export interface SessionModelSelection {
 }
 
 export interface SessionModelPickerContext {
-	scopedModels: readonly ScopedModel[];
 	modelRegistry: {
 		refresh(): Promise<unknown>;
 		getAvailable(): Model<Api>[];
@@ -44,13 +43,6 @@ const SELECT_LIST_THEME = {
 	noMatch: (text: string) => text,
 };
 
-/** Resolve the same candidate scope used by Pi's normal model selector. */
-export function getPickerModels(
-	scopedModels: readonly Pick<ScopedModel, "model">[],
-	availableModels: readonly Model<Api>[],
-): Model<Api>[] {
-	return scopedModels.length > 0 ? scopedModels.map(({ model }) => model) : [...availableModels];
-}
 
 /** Put recently used models first while preserving the original order for the rest. */
 export function prioritizeRecentModels(
@@ -243,16 +235,12 @@ class SessionModelPickerComponent extends Container implements Focusable {
 export async function pickSessionModel(
 	ctx: SessionModelPickerContext,
 ): Promise<SessionModelSelection | undefined> {
-	let availableModels: Model<Api>[] = [];
-	if (ctx.scopedModels.length === 0) {
-		try {
-			await ctx.modelRegistry.refresh();
-		} catch {
-			ctx.ui.notify("Could not refresh model catalogs; showing cached models.", "warning");
-		}
-		availableModels = ctx.modelRegistry.getAvailable();
+	try {
+		await ctx.modelRegistry.refresh();
+	} catch {
+		ctx.ui.notify("Could not refresh model catalogs; showing cached models.", "warning");
 	}
-	const models = prioritizeRecentModels(getPickerModels(ctx.scopedModels, availableModels), ctx.recentModels);
+	const models = prioritizeRecentModels(ctx.modelRegistry.getAvailable(), ctx.recentModels);
 	const items = getModelPickerItems(models);
 	if (items.length === 0) {
 		ctx.ui.notify("No models are available for this session.", "warning");
